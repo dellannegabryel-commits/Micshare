@@ -1,28 +1,49 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl, Alert } from 'react-native';
-import { useDiscoveredPCs, PCInfo } from '../discovery';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  RefreshControl,
+  Alert,
+  TextInput,
+  Modal,
+} from 'react-native';
+import { useDiscoveredPCs } from '../discovery';
+import { PCInfo } from '../types';
 import { PairingClient } from '../pairing';
 import { useNavigation } from '@react-navigation/native';
 
 export function DiscoveryScreen() {
   const { pcs, refreshing, refresh } = useDiscoveredPCs();
   const [manualIp, setManualIp] = useState('');
-  const navigation = useNavigation();
+  const [pairingPc, setPairingPc] = useState<PCInfo | null>(null);
+  const [code, setCode] = useState('');
+  const navigation = useNavigation<any>();
 
-  const handlePair = async (pc: PCInfo) => {
-    const code = await showCodePrompt(pc.name);
-    if (!code) return;
+  const openPairModal = (pc: PCInfo) => {
+    setPairingPc(pc);
+    setCode(pc.code || '');
+  };
 
-    const pairing = new PairingClient(pc.ip, pc.ctrlPort);
-    const result = await pairing.connect(code);
+  const handlePairSubmit = async () => {
+    if (!pairingPc) return;
+    const targetPc = pairingPc;
+    const inputCode = code.trim();
+    setPairingPc(null);
+    setCode('');
+
+    const pairing = new PairingClient(targetPc.ip, targetPc.ctrlPort);
+    const result = await pairing.connect(inputCode);
 
     if (result.success && result.sessionId) {
       navigation.navigate('Audio', {
         sessionId: result.sessionId,
-        ip: pc.ip,
-        audioPort: pc.audioPort,
-        ctrlPort: pc.ctrlPort,
-        pcName: pc.name,
+        ip: targetPc.ip,
+        audioPort: targetPc.audioPort,
+        ctrlPort: targetPc.ctrlPort,
+        pcName: targetPc.name,
       });
     } else {
       Alert.alert('Erro de pareamento', result.error || 'Código inválido');
@@ -31,25 +52,20 @@ export function DiscoveryScreen() {
 
   const handleManualConnect = async () => {
     if (!manualIp.trim()) return;
-    const [ip, portStr] = manualIp.split(':');
+    const [ipPart, portStr] = manualIp.split(':');
+    const ip = (ipPart || '').trim();
     const port = parseInt(portStr || '41236', 10);
-    const code = await showCodePrompt('IP manual');
-    if (!code) return;
+    if (!ip) return;
 
-    const pairing = new PairingClient(ip, port);
-    const result = await pairing.connect(code);
-
-    if (result.success && result.sessionId) {
-      navigation.navigate('Audio', {
-        sessionId: result.sessionId,
-        ip,
-        audioPort: 41235,
-        ctrlPort: port,
-        pcName: 'Manual',
-      });
-    } else {
-      Alert.alert('Erro', result.error || 'Falha na conexão');
-    }
+    openPairModal({
+      name: 'Manual',
+      ip,
+      audioPort: 41235,
+      ctrlPort: port,
+      pair: true,
+      code: '',
+      lastSeen: Date.now(),
+    });
   };
 
   return (
@@ -71,12 +87,12 @@ export function DiscoveryScreen() {
           data={pcs}
           keyExtractor={(item) => `${item.name}@${item.ip}`}
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.pcItem} onPress={() => handlePair(item)}>
+            <TouchableOpacity style={styles.pcItem} onPress={() => openPairModal(item)}>
               <View style={styles.pcInfo}>
                 <Text style={styles.pcName}>{item.name}</Text>
                 <Text style={styles.pcIp}>{item.ip}:{item.ctrlPort}</Text>
               </View>
-              <Text style={styles.pcStatus}>{item.pair ? '🔒 Pareamento' : '🔓 Aberto'}</Text>
+              <Text style={styles.pcStatus}>{item.pair ? '🔒 Parear' : '🔓 Conectar'}</Text>
             </TouchableOpacity>
           )}
           refreshControl={
@@ -94,38 +110,53 @@ export function DiscoveryScreen() {
             onChangeText={setManualIp}
             placeholder="192.168.1.50:41236"
             placeholderTextColor="#666"
+            autoCapitalize="none"
+            autoCorrect={false}
           />
           <TouchableOpacity style={styles.manualButton} onPress={handleManualConnect}>
             <Text style={styles.manualButtonText}>Conectar</Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      <Modal visible={pairingPc !== null} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Parear com {pairingPc?.name}</Text>
+            <Text style={styles.modalSubtitle}>Digite o código de 6 dígitos mostrado no PC:</Text>
+            <TextInput
+              style={styles.codeInput}
+              value={code}
+              onChangeText={setCode}
+              placeholder="000000"
+              placeholderTextColor="#666"
+              keyboardType="numeric"
+              maxLength={6}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.cancelBtn]}
+                onPress={() => setPairingPc(null)}
+              >
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.confirmBtn]}
+                onPress={handlePairSubmit}
+              >
+                <Text style={styles.confirmBtnText}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-function showCodePrompt(pcName: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    Alert.prompt(
-      `Parear com ${pcName}`,
-      'Digite o código de 6 dígitos mostrado no PC',
-      [
-        { text: 'Cancelar', style: 'cancel', onPress: () => resolve(null) },
-        { text: 'Conectar', onPress: (code) => resolve(code || null) },
-      ],
-      'plain-text',
-      '',
-      'numeric'
-    );
-  });
-}
-
-// Need to import TextInput
-import { TextInput } from 'react-native';
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0a', padding: 16 },
-  header: { marginBottom: 24 },
+  header: { marginBottom: 24, marginTop: 16 },
   title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 4 },
   subtitle: { fontSize: 16, color: '#888' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
@@ -156,4 +187,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   manualButtonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    width: '100%',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 8 },
+  modalSubtitle: { fontSize: 14, color: '#aaa', marginBottom: 16 },
+  codeInput: {
+    backgroundColor: '#0a0a0a',
+    borderRadius: 8,
+    padding: 14,
+    color: '#fff',
+    fontSize: 24,
+    textAlign: 'center',
+    letterSpacing: 8,
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+    marginBottom: 20,
+  },
+  modalButtons: { flexDirection: 'row', gap: 12 },
+  modalBtn: { flex: 1, borderRadius: 8, padding: 14, alignItems: 'center' },
+  cancelBtn: { backgroundColor: '#2a2a2a' },
+  cancelBtnText: { color: '#aaa', fontWeight: '600' },
+  confirmBtn: { backgroundColor: '#3b82f6' },
+  confirmBtnText: { color: '#fff', fontWeight: '600' },
 });

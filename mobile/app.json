@@ -39,17 +39,8 @@
         "android.permission.ACCESS_WIFI_STATE",
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.CHANGE_WIFI_MULTICAST_STATE"
-      ],
-      "usesCleartextTraffic": true
+      ]
     },
-    "plugins": [
-      "expo-dev-client",
-      "expo-audio"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "micshare-mobile"
-      }
-    }
+    "plugins": []
   }
 }

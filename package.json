@@ -5,7 +5,7 @@
   "description": "Microfone P2P em rede local — celular como microfone de entrada do PC",
   "workspaces": ["packages/*", "mobile"],
   "scripts": {
-    "typecheck": "tsc --noEmit -b packages/protocol packages/pc mobile",
+    "typecheck": "tsc -b --noEmit packages/protocol packages/pc && npm --prefix mobile run typecheck",
     "install:pc": "npm --prefix packages/pc install",
     "dev:pc": "npm --prefix packages/pc run dev"
   },

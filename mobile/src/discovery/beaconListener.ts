@@ -1,5 +1,5 @@
-import { createSocket } from 'react-native-udp';
-import { BeaconMessage, PCInfo } from './types';
+import UdpSockets from 'react-native-udp';
+import { BeaconMessage, PCInfo } from '../types';
 
 const BEACON_PORT = 41234;
 const TTL_MS = 3000;
@@ -9,7 +9,7 @@ export function parseBeacon(data: Uint8Array): BeaconMessage | null {
     const text = new TextDecoder().decode(data);
     const msg = JSON.parse(text) as BeaconMessage;
     if (msg.app !== 'micshare' || msg.v !== 1) return null;
-    if (typeof msg.name !== 'string' || typeof msg.ip !== 'string') return null;
+    if (typeof msg.name !== 'string') return null;
     if (typeof msg.audioPort !== 'number' || typeof msg.ctrlPort !== 'number') return null;
     if (typeof msg.pair !== 'boolean' || typeof msg.code !== 'string') return null;
     return msg;
@@ -19,16 +19,16 @@ export function parseBeacon(data: Uint8Array): BeaconMessage | null {
 }
 
 export class BeaconListener {
-  private socket: ReturnType<typeof createSocket> | null = null;
+  private socket: any = null;
   private pcs = new Map<string, PCInfo>();
   private listeners: Set<(pcs: PCInfo[]) => void> = new Set();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.socket = createSocket('udp4');
-      
-      this.socket.on('error', (err) => {
+      this.socket = UdpSockets.createSocket({ type: 'udp4' });
+
+      this.socket.on('error', (err: any) => {
         console.error('[beacon] socket error:', err);
         reject(err);
       });
@@ -38,7 +38,7 @@ export class BeaconListener {
         resolve();
       });
 
-      this.socket.on('message', (msg, rinfo) => {
+      this.socket.on('message', (msg: any, rinfo: any) => {
         const beacon = parseBeacon(msg);
         if (!beacon) return;
         const key = `${beacon.name}@${rinfo.address}`;

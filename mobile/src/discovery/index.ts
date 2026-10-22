@@ -1,2 +1,2 @@
-export { beaconListener, parseBeacon, BeaconListener } from './beaconListener';
-export { useDiscoveredPCs } from './useDiscoveredPCs';
+export * from './beaconListener';
+export * from './useDiscoveredPCs';

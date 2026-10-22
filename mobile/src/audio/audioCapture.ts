@@ -1,10 +1,12 @@
-import { Audio, AudioStreamEncoding } from 'expo-audio';
-import { requestRecordingPermissionsAsync } from 'expo-av';
+import LiveAudioStream from 'react-native-live-audio-stream';
+import { PermissionsAndroid, Platform } from 'react-native';
+import { Buffer } from 'buffer';
 
 const SAMPLE_RATE = 48000;
 const CHANNELS = 1;
 const FRAME_MS = 10;
-const SAMPLES_PER_FRAME = (SAMPLE_RATE * FRAME_MS) / 1000; // 480
+const SAMPLES_PER_FRAME = (SAMPLE_RATE * FRAME_MS) / 1000; // 480 samples = 960 bytes (int16)
+const FRAME_BYTES = SAMPLES_PER_FRAME * 2;
 
 export interface CaptureCallbacks {
   onFrame: (pcm: Int16Array) => void;
@@ -14,69 +16,98 @@ export interface CaptureCallbacks {
 }
 
 export class AudioCapture {
-  private stream: InstanceType<typeof Audio.AudioStream> | null = null;
   private running = false;
   private callbacks: CaptureCallbacks | null = null;
+  private bufferAcc: Uint8Array = new Uint8Array(0);
 
   static async requestPermission(): Promise<boolean> {
-    try {
-      const { status } = await requestRecordingPermissionsAsync();
-      return status === 'granted';
-    } catch (err) {
-      console.error('[capture] permission error:', err);
-      return false;
+    if (Platform.OS === 'android') {
+      try {
+        const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+        if (!permission) return true;
+        const granted = await PermissionsAndroid.request(permission, {
+          title: 'Permissão de Microfone',
+          message: 'Micshare precisa acessar o microfone para transmitir áudio ao PC.',
+          buttonNeutral: 'Perguntar depois',
+          buttonNegative: 'Cancelar',
+          buttonPositive: 'OK',
+        });
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      } catch (err) {
+        console.error('[capture] permission error:', err);
+        return false;
+      }
     }
+    return true;
   }
 
   async start(callbacks: CaptureCallbacks): Promise<void> {
     if (this.running) return;
     this.callbacks = callbacks;
 
-    const { status } = await requestRecordingPermissionsAsync();
-    if (status !== 'granted') {
+    const granted = await AudioCapture.requestPermission();
+    if (!granted) {
       throw new Error('Permissão de microfone negada');
     }
 
-    this.stream = new Audio.AudioStream({
+    LiveAudioStream.init({
       sampleRate: SAMPLE_RATE,
       channels: CHANNELS,
-      encoding: 'int16' as AudioStreamEncoding,
-      onBuffer: (buffer: any) => this.handleBuffer(buffer),
+      bitsPerSample: 16,
+      audioSource: 6, // VOICE_RECOGNITION
+      bufferSize: FRAME_BYTES,
+      wavFile: '',
+    });
+
+    LiveAudioStream.on('data', (base64Data: string) => {
+      this.handleChunk(base64Data);
     });
 
     this.running = true;
     this.callbacks.onStart?.();
-    await this.stream.start();
+    LiveAudioStream.start();
   }
 
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
     this.callbacks?.onStop?.();
-    this.stream?.stop();
-    this.stream = null;
+    LiveAudioStream.stop();
     this.callbacks = null;
+    this.bufferAcc = new Uint8Array(0);
   }
 
   isRunning(): boolean {
     return this.running;
   }
 
-  private handleBuffer(buffer: any): void {
+  private handleChunk(base64Data: string): void {
     if (!this.running || !this.callbacks) return;
 
-    // buffer.data é ArrayBuffer (int16 LE)
-    let pcm = new Int16Array(buffer.data);
+    try {
+      const buf = Buffer.from(base64Data, 'base64');
+      const u8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
 
-    // Ajusta para exatamente 480 samples (pad/truncate)
-    if (pcm.length !== SAMPLES_PER_FRAME) {
-      const fixed = new Int16Array(SAMPLES_PER_FRAME);
-      const len = Math.min(pcm.length, SAMPLES_PER_FRAME);
-      fixed.set(pcm.subarray(0, len));
-      pcm = fixed;
+      // Accumulate incoming bytes
+      const combined = new Uint8Array(this.bufferAcc.length + u8.length);
+      combined.set(this.bufferAcc);
+      combined.set(u8, this.bufferAcc.length);
+      this.bufferAcc = combined;
+
+      while (this.bufferAcc.length >= FRAME_BYTES) {
+        const frameBytes = this.bufferAcc.slice(0, FRAME_BYTES);
+        this.bufferAcc = this.bufferAcc.slice(FRAME_BYTES);
+
+        const pcm = new Int16Array(
+          frameBytes.buffer,
+          frameBytes.byteOffset,
+          FRAME_BYTES / 2
+        );
+        this.callbacks.onFrame(pcm);
+      }
+    } catch (err) {
+      this.callbacks.onError?.(err instanceof Error ? err : new Error(String(err)));
     }
-
-    this.callbacks.onFrame(pcm);
   }
 }
 

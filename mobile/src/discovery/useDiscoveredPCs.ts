@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { beaconListener, PCInfo } from './beaconListener';
+import { beaconListener } from './beaconListener';
+import { PCInfo } from '../types';
 
 export function useDiscoveredPCs(): { pcs: PCInfo[]; refreshing: boolean; refresh: () => void } {
   const [pcs, setPCs] = useState<PCInfo[]>([]);

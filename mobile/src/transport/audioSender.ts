@@ -1,10 +1,11 @@
-import { createSocket } from 'react-native-udp';
+import UdpSockets from 'react-native-udp';
 import { encodeAudioFrame, PCM_BYTES_PER_FRAME } from '@micshare/protocol';
+import { Buffer } from 'buffer';
 
 const FLAG_MUTED = 0x02;
 
 export class AudioSender {
-  private socket: ReturnType<typeof createSocket> | null = null;
+  private socket: any = null;
   private targetIp: string = '';
   private targetPort: number = 0;
   private seq = 0;
@@ -17,10 +18,10 @@ export class AudioSender {
     this.seq = 0;
     this.captureTsBase = Date.now();
 
-    this.socket = createSocket('udp4');
+    this.socket = UdpSockets.createSocket({ type: 'udp4' });
     await new Promise<void>((resolve, reject) => {
-      this.socket!.on('error', reject);
-      this.socket!.bind(0, () => resolve()); // random local port
+      this.socket.on('error', reject);
+      this.socket.bind(0, () => resolve()); // random local port
     });
     console.log('[sender] UDP socket bound, target:', ip, port);
   }
@@ -54,7 +55,7 @@ export class AudioSender {
     });
 
     try {
-      this.socket!.send(frame, this.targetPort, this.targetIp);
+      this.socket.send(frame, 0, frame.length, this.targetPort, this.targetIp);
     } catch (err) {
       console.error('[sender] send error:', err);
     }
