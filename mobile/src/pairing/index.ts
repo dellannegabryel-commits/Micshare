@@ -1,0 +1,1 @@
+export { PairingClient, type PairingResult } from './pairingClient';
