@@ -21,13 +21,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify checkout
-        run: |
-          echo "=== Repository root ==="
-          ls -la
-          echo "=== Mobile folder ==="
-          ls -la mobile/
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -61,11 +54,28 @@ jobs:
         working-directory: ./mobile
         run: npm install
 
+      - name: Expo prebuild (generate android folder)
+        working-directory: ./mobile
+        run: npx expo prebuild --platform android --no-install
+
       - name: Apply RN 0.74 compatibility patches
         working-directory: ./mobile
         run: |
           chmod +x apply-patches.sh
-          ./apply-patches.sh
+          # Apply patches with correct paths (expo prebuild changes node_modules structure)
+          for patch in patches/*.patch; do
+            # Try multiple possible locations
+            if patch -p1 --dry-run < "$patch" 2>/dev/null; then
+              patch -p1 < "$patch"
+            elif patch -p2 --dry-run < "$patch" 2>/dev/null; then
+              patch -p2 < "$patch"
+            elif patch -p3 --dry-run < "$patch" 2>/dev/null; then
+              patch -p3 < "$patch"
+            else
+              echo "Warning: Could not apply $patch"
+            fi
+          done
+          echo "Patches applied!"
 
       - name: Make gradlew executable
         working-directory: ./mobile/android
