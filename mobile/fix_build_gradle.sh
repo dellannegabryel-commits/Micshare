@@ -13,10 +13,11 @@ fi
 
 # Fix app/build.gradle
 if [ -f "android/app/build.gradle" ]; then
-  # Add REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion at project level
+  # Add REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion at project level (after plugins block)
   if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" android/app/build.gradle; then
-    sed -i '/^plugins {/,/^}/ { /^}/aext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")ext.compileSdkVersion = 34}' android/app/build.gradle
-    echo "Added properties to app/build.gradle"
+    # Find the line with "plugins {" and add after the closing "}"
+    awk '/^plugins \{$/ {in_block=1} in_block && /^}/ {print; print "ext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")"; print "ext.compileSdkVersion = 34"; print ""; next} {print}' android/app/build.gradle > android/app/build.gradle.tmp && mv android/app/build.gradle.tmp android/app/build.gradle
+    echo "Added REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion to app/build.gradle"
   fi
   
   # Add compileSdkVersion inside android block
