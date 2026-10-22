@@ -15,7 +15,7 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -44,7 +44,8 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./mobile
-        run: npm ci
+        run: |
+          npm ci
 
       - name: Apply RN 0.74 compatibility patches
         working-directory: ./mobile
@@ -71,4 +72,4 @@ jobs:
         if: always()
         run: |
           echo "Build completed!"
-          ls -la mobile/android/app/build/outputs/apk/debug/
+          ls -la mobile/android/app/build/outputs/apk/debug/ || true
