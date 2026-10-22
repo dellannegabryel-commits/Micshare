@@ -84,10 +84,8 @@ jobs:
       - name: Configure expo gradle plugin
         working-directory: ./mobile/android
         run: |
-          # Add pluginManagement to settings.gradle if not present
           if ! grep -q "pluginManagement" settings.gradle; then
-            cat > /tmp/plugin_mgmt.gradle << 'EOF'
-pluginManagement {
+            printf 'pluginManagement {
     repositories {
         gradlePluginPortal()
         google()
@@ -101,8 +99,7 @@ pluginManagement {
         }
     }
 }
-EOF
-            # Prepend to settings.gradle
+' > /tmp/plugin_mgmt.gradle
             cat /tmp/plugin_mgmt.gradle settings.gradle > /tmp/new_settings.gradle
             mv /tmp/new_settings.gradle settings.gradle
           fi
