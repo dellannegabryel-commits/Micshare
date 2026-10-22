@@ -5,14 +5,17 @@ cd "$(dirname "$0")/android"
 
 echo "Patching android configuration for AGP 8..."
 
-# 1. Add properties to app/build.gradle
-if [ -f "app/build.gradle" ]; then
-  # Add REACT_NATIVE_NODE_MODULES_DIR at project level if not present
-  if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" app/build.gradle; then
-    sed -i '/^android {/iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")' app/build.gradle
-    echo "Added REACT_NATIVE_NODE_MODULES_DIR to app/build.gradle"
+# 1. Add properties to root build.gradle (mobile/android/build.gradle)
+if [ -f "build.gradle" ]; then
+  # Add REACT_NATIVE_NODE_MODULES_DIR if not present
+  if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" build.gradle; then
+    sed -i '/^plugins {/iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")ext.compileSdkVersion = 34' build.gradle
+    echo "Added REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion to root build.gradle"
   fi
-  
+fi
+
+# 2. Add properties to app/build.gradle
+if [ -f "app/build.gradle" ]; then
   # Add compileSdkVersion inside android block if not present
   if ! grep -q "compileSdkVersion" app/build.gradle; then
     sed -i '/^android {/a\    compileSdkVersion 34' app/build.gradle
@@ -26,7 +29,7 @@ if [ -f "app/build.gradle" ]; then
   fi
 fi
 
-# 2. Allow cleartext traffic in AndroidManifest.xml
+# 3. Allow cleartext traffic in AndroidManifest.xml
 if [ -f "app/src/main/AndroidManifest.xml" ]; then
   if ! grep -q "usesCleartextTraffic" app/src/main/AndroidManifest.xml; then
     sed -i 's/<application /<application android:usesCleartextTraffic="true" /' app/src/main/AndroidManifest.xml
