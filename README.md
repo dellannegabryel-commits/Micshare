@@ -38,3 +38,4 @@ Tarefas da Sprint 01 em `ready`, o gate (S1.8) e as fases seguintes em `todo`, p
 - Sem criptografia: o áudio trafega em claro na LAN (ver `docs/arquitetura.md` §10).
 - Depende de cabo virtual instalado no PC para que o sistema enxergue um microfone.
 - Redes com isolamento de cliente (AP corporativo/guests) impedem descoberta e frequentemente o áudio — usar IP manual quando aplicável.
+# trigger
