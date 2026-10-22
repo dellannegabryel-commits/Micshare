@@ -57,8 +57,9 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      - name: Install all dependencies (from root)
-        run: npm ci
+      - name: Install mobile dependencies
+        working-directory: ./mobile
+        run: npm install
 
       - name: Apply RN 0.74 compatibility patches
         working-directory: ./mobile
