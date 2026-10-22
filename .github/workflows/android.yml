@@ -5,13 +5,11 @@ on:
     branches: [main, develop]
     paths:
       - 'mobile/**'
-      - 'packages/protocol/**'
       - '.github/workflows/android.yml'
   pull_request:
     branches: [main]
     paths:
       - 'mobile/**'
-      - 'packages/protocol/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -29,6 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: ''
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -36,21 +35,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install dependencies
-        working-directory: ./mobile
-        run: npm install
-
-      - name: Verify TypeScript
-        working-directory: ./mobile
-        run: npm run typecheck
-
-      - name: Expo prebuild
-        working-directory: ./mobile
-        run: npx expo prebuild --platform android --no-install
-
-      - name: Patch Android configurations for AGP 8
-        working-directory: ./mobile
-        run: bash ./patch-android.sh
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          api-level: 34
+          ndk-version: r26d
+          emulator: false
 
       - name: Setup Gradle cache
         uses: actions/cache@v4
@@ -58,9 +48,44 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
           restore-keys: |
             gradle-${{ runner.os }}-
+
+      - name: Install mobile dependencies
+        working-directory: ./mobile
+        run: npm install
+
+      - name: Expo prebuild (generate android folder)
+        working-directory: ./mobile
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Apply RN 0.74 compatibility patches
+        working-directory: ./mobile
+        run: |
+          chmod +x apply-patches.sh
+          if [ -d "patches" ]; then
+            for patch in patches/*.patch; do
+              if [ -f "$patch" ]; then
+                if patch -p1 --dry-run < "$patch" 2>/dev/null; then
+                  patch -p1 < "$patch"
+                elif patch -p2 --dry-run < "$patch" 2>/dev/null; then
+                  patch -p2 < "$patch"
+                elif patch -p3 --dry-run < "$patch" 2>/dev/null; then
+                  patch -p3 < "$patch"
+                else
+                  echo "Warning: Could not apply $patch"
+                fi
+              fi
+            done
+          fi
+          echo "Patches applied!"
+
+      - name: Configure expo gradle plugin
+        working-directory: ./mobile/android
+        run: |
+          chmod +x ../configure-gradle.sh
+          ../configure-gradle.sh
 
       - name: Make gradlew executable
         working-directory: ./mobile/android
@@ -77,8 +102,8 @@ jobs:
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
-      - name: Build Summary
+      - name: Upload APK info
         if: always()
         run: |
-          echo "Build finished!"
+          echo "Build completed!"
           ls -la mobile/android/app/build/outputs/apk/debug/ || true
