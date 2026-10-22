@@ -62,7 +62,7 @@ jobs:
 
       - name: Fix build.gradle properties
         working-directory: ./mobile
-        run: bash fix_build_gradle.sh
+        run: python3 fix_build_gradle.py
 
       - name: Make gradlew executable
         working-directory: ./mobile/android
