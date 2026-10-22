@@ -19,6 +19,7 @@ jobs:
     defaults:
       run:
         shell: bash
+        working-directory: ./mobile
 
     steps:
       - name: Checkout repository
@@ -28,7 +29,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # Disable npm cache to avoid path issues
           cache: ''
 
       - name: Setup JDK 17
@@ -36,7 +36,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+          # Don't use gradle cache here - we'll handle it manually
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -45,10 +45,19 @@ jobs:
           ndk-version: r26d
           emulator: false
 
+      - name: Setup Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
       - name: Install dependencies
         working-directory: ./mobile
-        run: |
-          npm ci
+        run: npm ci
 
       - name: Apply RN 0.74 compatibility patches
         working-directory: ./mobile
