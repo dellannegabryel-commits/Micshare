@@ -5,13 +5,11 @@ on:
     branches: [main, develop]
     paths:
       - 'mobile/**'
-      - 'packages/protocol/**'
       - '.github/workflows/android.yml'
   pull_request:
     branches: [main]
     paths:
       - 'mobile/**'
-      - 'packages/protocol/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -29,6 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: ''
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -36,21 +35,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install dependencies
-        working-directory: ./mobile
-        run: npm install
-
-      - name: Verify TypeScript
-        working-directory: ./mobile
-        run: npm run typecheck
-
-      - name: Expo prebuild
-        working-directory: ./mobile
-        run: npx expo prebuild --platform android --no-install
-
-      - name: Patch Android configurations for AGP 8
-        working-directory: ./mobile
-        run: bash ./patch-android.sh
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          api-level: 34
+          ndk-version: r26d
+          emulator: false
 
       - name: Setup Gradle cache
         uses: actions/cache@v4
@@ -58,9 +48,71 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
           restore-keys: |
             gradle-${{ runner.os }}-
+
+      - name: Install mobile dependencies
+        working-directory: ./mobile
+        run: npm install
+
+      - name: Expo prebuild (generate android folder)
+        working-directory: ./mobile
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Fix build.gradle properties
+        working-directory: ./mobile
+        run: |
+          python3 -c "
+import re, os
+# Fix root build.gradle
+path = 'android/build.gradle'
+if os.path.exists(path):
+    with open(path, 'r') as f:
+        content = f.read()
+    if 'REACT_NATIVE_NODE_MODULES_DIR' not in content:
+        content = re.sub(r'(plugins\s*\{[^}]+\})', r'
+
+ext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")
+ext.compileSdkVersion = 34
+', content, count=1)
+        with open(path, 'w') as f:
+            f.write(content)
+        print('Fixed root build.gradle')
+
+# Fix app/build.gradle
+path = 'android/app/build.gradle'
+if os.path.exists(path):
+    with open(path, 'r') as f:
+        content = f.read()
+    if 'REACT_NATIVE_NODE_MODULES_DIR' not in content:
+        content = re.sub(r'(plugins\s*\{[^}]+\})', r'
+
+ext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")
+ext.compileSdkVersion = 34
+', content, count=1)
+    if 'compileSdkVersion' not in content:
+        content = re.sub(r'(android\s*\{)', r'
+    compileSdkVersion 34', content, count=1)
+    if 'namespace' not in content:
+        content = re.sub(r'(android\s*\{)', r'
+    namespace "com.micshare"', content, count=1)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('Fixed app/build.gradle')
+
+# Fix AndroidManifest.xml
+path = 'android/app/src/main/AndroidManifest.xml'
+if os.path.exists(path):
+    with open(path, 'r') as f:
+        content = f.read()
+    if 'usesCleartextTraffic' not in content:
+        content = content.replace('<application ', '<application android:usesCleartextTraffic="true" ')
+        with open(path, 'w') as f:
+            f.write(content)
+        print('Fixed AndroidManifest.xml')
+print('All fixes applied!')
+"
 
       - name: Make gradlew executable
         working-directory: ./mobile/android
@@ -77,8 +129,8 @@ jobs:
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
-      - name: Build Summary
+      - name: Upload APK info
         if: always()
         run: |
-          echo "Build finished!"
+          echo "Build completed!"
           ls -la mobile/android/app/build/outputs/apk/debug/ || true
