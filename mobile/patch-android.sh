@@ -13,55 +13,27 @@ if [ -f "build.gradle" ]; then
   fi
 fi
 
-# 2. Fix app/build.gradle using Python script
+# 2. Fix app/build.gradle - simple line additions
 if [ -f "app/build.gradle" ]; then
-  cat > fix_app_build.py << 'PYEOF'
-import re
-
-with open('app/build.gradle', 'r') as f:
-    content = f.read()
-
-# Add REACT_NATIVE_NODE_MODULES_DIR at project level if not present
-if 'REACT_NATIVE_NODE_MODULES_DIR' not in content:
-    content = re.sub(
-        r'(plugins\s*\{[^}]+\})',
-        r'
-
-ext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")
-ext.compileSdkVersion = 34
-',
-        content,
-        count=1
-    )
-
-# Add compileSdkVersion inside android block if not present
-if 'compileSdkVersion' not in content:
-    content = re.sub(
-        r'(android\s*\{)',
-        r'
-    compileSdkVersion 34',
-        content,
-        count=1
-    )
-
-# Add namespace inside android block if not present
-if 'namespace' not in content:
-    content = re.sub(
-        r'(android\s*\{)',
-        r'
-    namespace "com.micshare"',
-        content,
-        count=1
-    )
-
-with open('app/build.gradle', 'w') as f:
-    f.write(content)
-
-print("Fixed app/build.gradle")
-PYEOF
-
-  python3 fix_app_build.py
-  rm fix_app_build.py
+  # Add REACT_NATIVE_NODE_MODULES_DIR at project level (after plugins block)
+  if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" app/build.gradle; then
+    # Find line with "plugins {" and add after the closing "}"
+    sed -i '/^plugins {/,/^}/ { /^}/aext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")ext.compileSdkVersion = 34}' app/build.gradle
+    echo "Added REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion to app/build.gradle"
+  fi
+  
+  # Add compileSdkVersion inside android block
+  if ! grep -q "compileSdkVersion" app/build.gradle; then
+    sed -i '/^android {/a\    compileSdkVersion 34' app/build.gradle
+    echo "Added compileSdkVersion to android block"
+  fi
+  
+  # Add namespace inside android block
+  if ! grep -q "namespace" app/build.gradle; then
+    sed -i '/^android {/a\    namespace "com.micshare"' app/build.gradle
+    echo "Added namespace to android block"
+  fi
+  
   echo "Fixed app/build.gradle"
 fi
 
