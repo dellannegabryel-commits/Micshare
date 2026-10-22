@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true
+  },
+  "references": [],
+  "include": ["src/**/*"]
+}

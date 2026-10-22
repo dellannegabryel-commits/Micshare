@@ -1,0 +1,16 @@
+export declare const MAGIC = 19795;
+export declare const VERSION = 1;
+export declare const AUDIO_PORT = 41235;
+export declare const BEACON_PORT = 41234;
+export declare const CTRL_PORT = 41236;
+export declare const HEADER_SIZE = 16;
+export declare const MAX_PAYLOAD_LEN: number;
+export declare const FLAG_SILENCE = 1;
+export declare const FLAG_MUTED = 2;
+export declare const CODEC_PCM_S16LE = 0;
+export declare const CODEC_OPUS = 1;
+export declare const SAMPLE_RATE = 48000;
+export declare const FRAME_MS = 10;
+export declare const SAMPLES_PER_FRAME: number;
+export declare const PCM_BYTES_PER_FRAME: number;
+export declare const WS_MAX_MESSAGE_BYTES = 1024;
