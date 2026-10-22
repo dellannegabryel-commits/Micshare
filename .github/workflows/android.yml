@@ -5,11 +5,13 @@ on:
     branches: [main, develop]
     paths:
       - 'mobile/**'
+      - 'packages/protocol/**'
       - '.github/workflows/android.yml'
   pull_request:
     branches: [main]
     paths:
       - 'mobile/**'
+      - 'packages/protocol/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -27,7 +29,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: ''
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -35,28 +36,15 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          api-level: 34
-          ndk-version: r26d
-          emulator: false
-
-      - name: Setup Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-
-      - name: Install mobile dependencies
+      - name: Install dependencies
         working-directory: ./mobile
         run: npm install
 
-      - name: Expo prebuild (generate android folder)
+      - name: Verify TypeScript
+        working-directory: ./mobile
+        run: npm run typecheck
+
+      - name: Expo prebuild
         working-directory: ./mobile
         run: npx expo prebuild --platform android --no-install
 
@@ -64,11 +52,15 @@ jobs:
         working-directory: ./mobile
         run: bash ./patch-android.sh
 
-      - name: Configure expo gradle plugin
-        working-directory: ./mobile/android
-        run: |
-          chmod +x ../configure-gradle.sh
-          ../configure-gradle.sh
+      - name: Setup Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/android/gradle/wrapper/gradle-wrapper.properties', 'mobile/android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Make gradlew executable
         working-directory: ./mobile/android
@@ -85,8 +77,8 @@ jobs:
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
-      - name: Upload APK info
+      - name: Build Summary
         if: always()
         run: |
-          echo "Build completed!"
+          echo "Build finished!"
           ls -la mobile/android/app/build/outputs/apk/debug/ || true
