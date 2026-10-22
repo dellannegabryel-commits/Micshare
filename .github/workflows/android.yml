@@ -60,26 +60,9 @@ jobs:
         working-directory: ./mobile
         run: npx expo prebuild --platform android --no-install
 
-      - name: Apply RN 0.74 compatibility patches
+      - name: Patch Android configurations for AGP 8
         working-directory: ./mobile
-        run: |
-          chmod +x apply-patches.sh
-          if [ -d "patches" ]; then
-            for patch in patches/*.patch; do
-              if [ -f "$patch" ]; then
-                if patch -p1 --dry-run < "$patch" 2>/dev/null; then
-                  patch -p1 < "$patch"
-                elif patch -p2 --dry-run < "$patch" 2>/dev/null; then
-                  patch -p2 < "$patch"
-                elif patch -p3 --dry-run < "$patch" 2>/dev/null; then
-                  patch -p3 < "$patch"
-                else
-                  echo "Warning: Could not apply $patch"
-                fi
-              fi
-            done
-          fi
-          echo "Patches applied!"
+        run: bash ./patch-android.sh
 
       - name: Configure expo gradle plugin
         working-directory: ./mobile/android
