@@ -36,10 +36,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          # Don't use gradle cache here - we'll handle it manually
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           api-level: 34
           ndk-version: r26d
