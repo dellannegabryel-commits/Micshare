@@ -36,51 +36,21 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Accept Android SDK licenses
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-
       - name: Install dependencies
-        run: |
-          npm --prefix mobile install
+        working-directory: ./mobile
+        run: npm install
 
       - name: Verify TypeScript
-        run: |
-          npm --prefix mobile run typecheck
+        working-directory: ./mobile
+        run: npm run typecheck
 
       - name: Expo prebuild
         working-directory: ./mobile
         run: npx expo prebuild --platform android --no-install
 
       - name: Patch Android configurations for AGP 8
-        working-directory: ./mobile/android
-        run: |
-          # 1. Disable automatic component creation to fix maven publish error
-          echo "android.disableAutomaticComponentCreation=true" >> gradle.properties
-
-          # 2. Add namespace fallback for libraries lacking namespace in build.gradle
-          cat << 'EOF' >> build.gradle
-
-subprojects {
-    afterEvaluate { project ->
-        if (project.hasProperty("android")) {
-            if (project.android.namespace == null) {
-                def manifestFile = file("${project.projectDir}/src/main/AndroidManifest.xml")
-                if (manifestFile.exists()) {
-                    def manifestText = manifestFile.getText('UTF-8')
-                    def matcher = manifestText =~ /package="([^"]+)"/
-                    if (matcher.find()) {
-                        project.android.namespace = matcher.group(1)
-                    }
-                }
-            }
-        }
-    }
-}
-EOF
-
-          # 3. Allow cleartext traffic for local network WebSocket
-          sed -i 's/<application /<application android:usesCleartextTraffic="true" /' app/src/main/AndroidManifest.xml
+        working-directory: ./mobile
+        run: bash ./patch-android.sh
 
       - name: Setup Gradle cache
         uses: actions/cache@v4
