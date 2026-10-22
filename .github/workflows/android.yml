@@ -16,14 +16,19 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash
-        working-directory: ./mobile
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify checkout
+        run: |
+          echo "=== Repository root ==="
+          ls -la
+          echo "=== Mobile folder ==="
+          ls -la mobile/
+          echo "=== package-lock.json exists? ==="
+          ls -la mobile/package-lock.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
