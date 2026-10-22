@@ -5,13 +5,18 @@ cd "$(dirname "$0")/android"
 
 echo "Patching android configuration for AGP 8..."
 
-# 1. Add properties to app/build.gradle at project level (before android block)
+# 1. Add properties to app/build.gradle
 if [ -f "app/build.gradle" ]; then
-  # Create a temporary file with the new properties added before android block
+  # Add REACT_NATIVE_NODE_MODULES_DIR at project level if not present
   if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" app/build.gradle; then
-    # Add properties before the first occurrence of "android {"
-    sed -i '/^android {/iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")ext.compileSdkVersion = 34' app/build.gradle
-    echo "Added REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion to app/build.gradle"
+    sed -i '/^android {/iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")' app/build.gradle
+    echo "Added REACT_NATIVE_NODE_MODULES_DIR to app/build.gradle"
+  fi
+  
+  # Add compileSdkVersion inside android block if not present
+  if ! grep -q "compileSdkVersion" app/build.gradle; then
+    sed -i '/^android {/a\    compileSdkVersion 34' app/build.gradle
+    echo "Added compileSdkVersion to app/build.gradle"
   fi
   
   # Add namespace inside android block if not present
