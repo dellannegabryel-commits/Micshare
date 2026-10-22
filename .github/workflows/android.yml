@@ -27,8 +27,6 @@ jobs:
           ls -la
           echo "=== Mobile folder ==="
           ls -la mobile/
-          echo "=== package-lock.json exists? ==="
-          ls -la mobile/package-lock.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -59,8 +57,8 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      - name: Install dependencies
-        run: npm ci --workspace=mobile
+      - name: Install all dependencies (from root)
+        run: npm ci
 
       - name: Apply RN 0.74 compatibility patches
         working-directory: ./mobile
