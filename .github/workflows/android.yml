@@ -81,29 +81,6 @@ jobs:
           fi
           echo "Patches applied!"
 
-      - name: Configure expo gradle plugin
-        working-directory: ./mobile/android
-        run: |
-          if ! grep -q "pluginManagement" settings.gradle; then
-            printf 'pluginManagement {
-    repositories {
-        gradlePluginPortal()
-        google()
-        mavenCentral()
-    }
-    resolutionStrategy {
-        eachPlugin {
-            if (requested.id.id == "expo-module-gradle-plugin") {
-                useModule("expo:expo-module-gradle-plugin:2.0.0")
-            }
-        }
-    }
-}
-' > /tmp/plugin_mgmt.gradle
-            cat /tmp/plugin_mgmt.gradle settings.gradle > /tmp/new_settings.gradle
-            mv /tmp/new_settings.gradle settings.gradle
-          fi
-
       - name: Make gradlew executable
         working-directory: ./mobile/android
         run: chmod +x gradlew
