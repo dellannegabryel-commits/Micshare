@@ -60,8 +60,7 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Install dependencies
-        run: |
-          npm ci --workspaces=false --workspace=mobile
+        run: npm ci --workspace=mobile
 
       - name: Apply RN 0.74 compatibility patches
         working-directory: ./mobile
