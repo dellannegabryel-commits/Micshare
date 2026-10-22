@@ -5,28 +5,67 @@ cd "$(dirname "$0")/android"
 
 echo "Patching android configuration for AGP 8..."
 
-# 1. Add properties to root build.gradle (mobile/android/build.gradle)
+# 1. Fix root build.gradle
 if [ -f "build.gradle" ]; then
-  # Add REACT_NATIVE_NODE_MODULES_DIR if not present
   if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" build.gradle; then
     sed -i '/^plugins {/iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")ext.compileSdkVersion = 34' build.gradle
-    echo "Added REACT_NATIVE_NODE_MODULES_DIR and compileSdkVersion to root build.gradle"
+    echo "Fixed root build.gradle"
   fi
 fi
 
-# 2. Add properties to app/build.gradle
+# 2. Fix app/build.gradle - rewrite with correct properties
 if [ -f "app/build.gradle" ]; then
-  # Add compileSdkVersion inside android block if not present
-  if ! grep -q "compileSdkVersion" app/build.gradle; then
-    sed -i '/^android {/a\    compileSdkVersion 34' app/build.gradle
-    echo "Added compileSdkVersion to app/build.gradle"
-  fi
+  # Create a backup
+  cp app/build.gradle app/build.gradle.bak
   
-  # Add namespace inside android block if not present
-  if ! grep -q "namespace" app/build.gradle; then
-    sed -i '/^android {/a\    namespace "com.micshare"' app/build.gradle
-    echo "Added namespace to app/build.gradle"
-  fi
+  # Use Python to properly rewrite the file
+  python3 << 'PYEOF'
+import re
+
+with open('app/build.gradle', 'r') as f:
+    content = f.read()
+
+# Add REACT_NATIVE_NODE_MODULES_DIR at project level if not present
+if 'REACT_NATIVE_NODE_MODULES_DIR' not in content:
+    # Add after plugins block, before android block
+    content = re.sub(
+        r'(plugins\s*\{[^}]+\})',
+        r'
+
+ext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")
+ext.compileSdkVersion = 34
+',
+        content,
+        count=1
+    )
+
+# Add compileSdkVersion inside android block if not present
+if 'compileSdkVersion' not in content:
+    content = re.sub(
+        r'(android\s*\{)',
+        r'
+    compileSdkVersion 34',
+        content,
+        count=1
+    )
+
+# Add namespace inside android block if not present
+if 'namespace' not in content:
+    content = re.sub(
+        r'(android\s*\{)',
+        r'
+    namespace "com.micshare"',
+        content,
+        count=1
+    )
+
+with open('app/build.gradle', 'w') as f:
+    f.write(content)
+
+print("Fixed app/build.gradle")
+PYEOF
+
+  echo "Fixed app/build.gradle"
 fi
 
 # 3. Allow cleartext traffic in AndroidManifest.xml
