@@ -5,12 +5,24 @@ cd "$(dirname "$0")/android"
 
 echo "Patching android configuration for AGP 8..."
 
-# 1. Fix namespace in app/build.gradle instead of root build.gradle
+# 1. Add namespace and compileSdkVersion to app/build.gradle
 if [ -f "app/build.gradle" ]; then
+  # Add namespace if not present
   if ! grep -q "namespace" app/build.gradle; then
-    # Add namespace after android { line
     sed -i '/^android {/a\    namespace "com.micshare"' app/build.gradle
     echo "Added namespace to app/build.gradle"
+  fi
+  
+  # Add compileSdkVersion if not present
+  if ! grep -q "compileSdkVersion" app/build.gradle; then
+    sed -i '/^android {/a\    compileSdkVersion 34' app/build.gradle
+    echo "Added compileSdkVersion to app/build.gradle"
+  fi
+  
+  # Add REACT_NATIVE_NODE_MODULES_DIR for react-native-gesture-handler
+  if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" app/build.gradle; then
+    sed -i '/^android {/a\    ext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")' app/build.gradle
+    echo "Added REACT_NATIVE_NODE_MODULES_DIR to app/build.gradle"
   fi
 fi
 
