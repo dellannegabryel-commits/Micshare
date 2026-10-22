@@ -13,13 +13,9 @@ if [ -f "build.gradle" ]; then
   fi
 fi
 
-# 2. Fix app/build.gradle - rewrite with correct properties
+# 2. Fix app/build.gradle using Python script
 if [ -f "app/build.gradle" ]; then
-  # Create a backup
-  cp app/build.gradle app/build.gradle.bak
-  
-  # Use Python to properly rewrite the file
-  python3 << 'PYEOF'
+  cat > fix_app_build.py << 'PYEOF'
 import re
 
 with open('app/build.gradle', 'r') as f:
@@ -27,7 +23,6 @@ with open('app/build.gradle', 'r') as f:
 
 # Add REACT_NATIVE_NODE_MODULES_DIR at project level if not present
 if 'REACT_NATIVE_NODE_MODULES_DIR' not in content:
-    # Add after plugins block, before android block
     content = re.sub(
         r'(plugins\s*\{[^}]+\})',
         r'
@@ -65,6 +60,8 @@ with open('app/build.gradle', 'w') as f:
 print("Fixed app/build.gradle")
 PYEOF
 
+  python3 fix_app_build.py
+  rm fix_app_build.py
   echo "Fixed app/build.gradle"
 fi
 
