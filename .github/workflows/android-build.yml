@@ -102,8 +102,8 @@ jobs:
         run: ./gradlew :app:lintDebug
         working-directory: mobile
 
-      - name: Run KSP/Kotlin compile check
-        run: ./gradlew :app:kspDebugKotlin
+      - name: Run Kotlin compile check
+        run: ./gradlew :app:compileDebugKotlin
         working-directory: mobile
 
       - name: Upload Lint Report
