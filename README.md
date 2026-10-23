@@ -41,3 +41,4 @@ Tarefas da Sprint 01 em `ready`, o gate (S1.8) e as fases seguintes em `todo`, p
 # trigger
 # trigger
 # trigger
+# trigger 2
