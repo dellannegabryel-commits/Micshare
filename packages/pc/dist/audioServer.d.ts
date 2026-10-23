@@ -3,6 +3,7 @@ export interface ServerConfig {
     deviceSubstring?: string;
     pairingCode?: string;
     verbose?: boolean;
+    name?: string;
 }
 export declare class AudioServer {
     private config;
@@ -12,6 +13,7 @@ export declare class AudioServer {
     private sink;
     private control;
     private sinkInterval;
+    private beacon;
     constructor(config?: ServerConfig);
     start(): Promise<void>;
     private maybeLogStats;

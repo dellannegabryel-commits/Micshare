@@ -1,80 +1,62 @@
-import { spawn } from 'node:child_process';
 import { PCM_BYTES_PER_FRAME, SAMPLE_RATE } from '@micshare/protocol';
 export class AudioSink {
     config;
-    proc = null;
-    stream = null;
+    audioOutput = null;
+    buffer = [];
     closed = false;
+    maxBufferFrames = 20; // ~200ms buffer
     constructor(config = {}) {
         this.config = config;
     }
     async open() {
-        if (this.config.forceFfplay) {
-            return this.openFfplay();
-        }
-        try {
-            const naudiodon2 = require('naudiodon2');
-            const devices = naudiodon2.Device.getDevices();
-            let device = devices.find((d) => d.name.includes(this.config.deviceSubstring || 'CABLE'));
-            if (!device)
-                device = devices[0];
-            if (!device)
-                throw new Error('nenhum dispositivo de saída encontrado');
-            const ao = new naudiodon2.AudioOutput({
+        const naudiodon2 = await import('naudiodon2');
+        const devices = naudiodon2.getDevices();
+        // Filtrar apenas dispositivos de saída (maxOutputChannels > 0)
+        const outputDevices = devices.filter((d) => d.maxOutputChannels > 0);
+        if (outputDevices.length === 0)
+            throw new Error('nenhum dispositivo de saída encontrado');
+        let device = outputDevices.find((d) => d.name.includes(this.config.deviceSubstring || 'CABLE'));
+        if (!device)
+            device = outputDevices[0];
+        console.log(`[sink] usando dispositivo: ${device.name} (id=${device.id}, maxOutputChannels=${device.maxOutputChannels})`);
+        // PortAudio callback: pull model - preenchemos buffer interno
+        this.audioOutput = naudiodon2.AudioIO({
+            outOptions: {
                 sampleRate: this.config.sampleRate ?? SAMPLE_RATE,
                 channelCount: 1,
                 deviceId: device.id,
                 closeOnError: false,
-            });
-            ao.on('data', (data) => {
-                // callback de PortAudio pede dados; enfileiramos silêncio se não houver
-            });
-            // PortAudio pull model: não há stream de escrita direta. Usamos ffplay como fallback confiável
-            // quando não houver suporte a push simples. Abaixo, fallback controlado.
-            throw new Error('naudiodon2 pull-model sem push direto; use --sink=ffplay');
-        }
-        catch {
-            return this.openFfplay();
-        }
-    }
-    openFfplay() {
-        const args = [
-            '-f', 's16le',
-            '-ar', String(this.config.sampleRate ?? SAMPLE_RATE),
-            '-ac', '1',
-            '-flags', 'low_delay',
-            '-probesize', '32',
-            '-i', 'pipe:0',
-            '-nodisp',
-        ];
-        this.proc = spawn('ffplay', args, { stdio: ['pipe', 'ignore', 'pipe'] });
-        this.stream = this.proc.stdin;
-        this.proc.stderr?.on('data', () => { }); // descarta ruído do ffplay
-        this.proc.on('exit', () => {
-            this.stream = null;
-            this.proc = null;
+            },
         });
-        this.proc.on('error', (err) => {
-            console.error('[sink] ffplay error:', err.message);
-            this.stream = null;
-            this.proc = null;
+        this.audioOutput.on('data', (data) => {
+            // PortAudio pede dados - consumimos do nosso buffer interno
+            const frameSize = PCM_BYTES_PER_FRAME;
+            if (this.buffer.length > 0) {
+                const frame = this.buffer.shift();
+                const buf = Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength);
+                buf.copy(data);
+            }
+            else {
+                // underrun - preenche com silêncio
+                data.fill(0);
+            }
         });
-        this.stream.on('error', (err) => {
-            if (err.code !== 'EPIPE')
-                console.error('[sink] stream error:', err.message);
+        this.audioOutput.on('error', (err) => {
+            console.error('[sink] PortAudio error:', err.message);
         });
+        this.audioOutput.start();
     }
     write(samples) {
         if (this.closed)
             return;
-        const buf = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
-        if (this.stream) {
-            try {
-                this.stream.write(buf);
-            }
-            catch {
-                // sink indisponível, ignora frame
-            }
+        // push para buffer interno (limitado)
+        if (this.buffer.length < this.maxBufferFrames) {
+            this.buffer.push(samples);
+        }
+        // se buffer cheio, descarta frame mais antigo (fast-forward)
+        else if (this.buffer.length > 0) {
+            this.buffer.shift();
+            this.buffer.push(samples);
         }
     }
     writeSilence() {
@@ -82,16 +64,10 @@ export class AudioSink {
     }
     close() {
         this.closed = true;
-        if (this.stream) {
-            try {
-                this.stream.end();
-            }
-            catch { }
-            this.stream = null;
+        if (this.audioOutput) {
+            this.audioOutput.quit();
+            this.audioOutput = null;
         }
-        if (this.proc) {
-            this.proc.kill();
-            this.proc = null;
-        }
+        this.buffer = [];
     }
 }

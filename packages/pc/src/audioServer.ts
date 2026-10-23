@@ -1,16 +1,19 @@
 import { createSocket, type RemoteInfo } from 'node:dgram';
 import { AddressInfo } from 'node:net';
+import { hostname as osHostname } from 'node:os';
 import { encodeAudioFrame, decodeAudioFrame, AUDIO_PORT, PCM_BYTES_PER_FRAME } from '@micshare/protocol';
 import { JitterBuffer } from './jitterBuffer.js';
 import { MetricsCollector } from './metrics.js';
 import { AudioSink } from './sink.js';
 import { ControlServer } from './control.js';
+import { BeaconSender, BeaconConfig } from './discovery.js';
 
 export interface ServerConfig {
   audioPort?: number;
   deviceSubstring?: string;
   pairingCode?: string;
   verbose?: boolean;
+  name?: string; // hostname do PC para beacon
 }
 
 export class AudioServer {
@@ -20,6 +23,7 @@ export class AudioServer {
   private sink: AudioSink | null = null;
   private control: ControlServer | null = null;
   private sinkInterval: NodeJS.Timeout | null = null;
+  private beacon: BeaconSender | null = null;
 
   constructor(private config: ServerConfig = {}) {}
 
@@ -38,12 +42,22 @@ export class AudioServer {
     this.control = new ControlServer({
       port: 41236,
       pairingCode: this.config.pairingCode ?? '',
-      onHello: async () => true,
+      onHello: async (token) => token === this.config.pairingCode,
       onMute: (v) => console.log('[controle] mute:', v),
       onVolume: (v) => console.log('[controle] volume:', v),
       onBye: (sid) => console.log('[controle] bye:', sid),
     });
     this.control.start();
+
+    // Beacon UDP broadcast para descoberta
+    const hostname = this.config.name ?? osHostname();
+    this.beacon = new BeaconSender({
+      name: hostname,
+      audioPort: addr.port,
+      ctrlPort: 41236,
+      pairingCode: this.config.pairingCode ?? '',
+    });
+    this.beacon.start();
 
     this.socket.on('message', (buf: Buffer, rinfo: RemoteInfo) => {
       const frame = decodeAudioFrame(buf);
@@ -65,6 +79,7 @@ export class AudioServer {
 
     console.log(`[micshare] servidor de áudio UDP na porta ${addr.port}`);
     console.log(`[micshare] controle WebSocket na porta 41236`);
+    console.log(`[micshare] beacon ativo: ${hostname}:${addr.port}`);
     console.log(`[micshare] dispositivo de saída: ${this.config.deviceSubstring ?? 'padrão'}`);
   }
 
@@ -82,6 +97,7 @@ export class AudioServer {
     if (this.sinkInterval) clearInterval(this.sinkInterval);
     this.sink?.close();
     this.control?.stop();
+    this.beacon?.stop();
     this.socket.close();
   }
 }

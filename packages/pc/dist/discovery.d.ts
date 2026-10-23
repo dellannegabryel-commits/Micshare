@@ -13,3 +13,19 @@ export declare class OptionalDiscovery {
     start(): Promise<void>;
     isAvailable(): boolean;
 }
+export interface BeaconConfig {
+    name: string;
+    audioPort: number;
+    ctrlPort: number;
+    pairingCode: string;
+}
+export declare class BeaconSender {
+    private config;
+    private socket;
+    private interval;
+    private bound;
+    constructor(config: BeaconConfig);
+    start(): void;
+    private send;
+    stop(): void;
+}
