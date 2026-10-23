@@ -62,32 +62,48 @@ if [ -f "$SCREENS_PATH" ]; then
 fi
 
 # Fix react-native-audio-api (try multiple paths)
-AUDIO_PATHS=("node_modules/react-native-audio-api/android/build.gradle" "node_modules/@react-native-community/audio-api/android/build.gradle")
-for AUDIO_PATH in "${AUDIO_PATHS[@]}"; do
-  if [ -f "$AUDIO_PATH" ]; then
-    sed -i "s|minimalReactNativeVersion = 76|minimalReactNativeVersion = 74|g" "$AUDIO_PATH"
-    sed -i "s|minimalReactNativeVersion = 75|minimalReactNativeVersion = 74|g" "$AUDIO_PATH"
-    echo "Fixed $AUDIO_PATH"
-  fi
-done
+AUDIO_PATH1="node_modules/react-native-audio-api/android/build.gradle"
+if [ -f "$AUDIO_PATH1" ]; then
+  sed -i "s|minimalReactNativeVersion = 76|minimalReactNativeVersion = 74|g" "$AUDIO_PATH1"
+  sed -i "s|minimalReactNativeVersion = 75|minimalReactNativeVersion = 74|g" "$AUDIO_PATH1"
+  echo "Fixed $AUDIO_PATH1"
+fi
+
+AUDIO_PATH2="node_modules/@react-native-community/audio-api/android/build.gradle"
+if [ -f "$AUDIO_PATH2" ]; then
+  sed -i "s|minimalReactNativeVersion = 76|minimalReactNativeVersion = 74|g" "$AUDIO_PATH2"
+  sed -i "s|minimalReactNativeVersion = 75|minimalReactNativeVersion = 74|g" "$AUDIO_PATH2"
+  echo "Fixed $AUDIO_PATH2"
+fi
 
 # Fix @react-native/codegen (try multiple paths)
-CODEGEN_PATHS=("node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js" "node_modules/react-native/node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js")
-for CODEGEN_PATH in "${CODEGEN_PATHS[@]}"; do
-  if [ -f "$CODEGEN_PATH" ]; then
-    if ! grep -q "TSBooleanKeyword" "$CODEGEN_PATH"; then
-      sed -i "/return typeAnnotation;/i\  // Handle TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking\n  if (typeAnnotation && typeAnnotation.type) {\n    switch (typeAnnotation.type) {\n      case 'TSBooleanKeyword':\n        return { ...typeAnnotation, type: 'BooleanTypeAnnotation' };\n      case 'TSStringKeyword':\n        return { ...typeAnnotation, type: 'StringTypeAnnotation' };\n      case 'TSNumberKeyword':\n        return { ...typeAnnotation, type: 'NumberTypeAnnotation' };\n    }\n  }" "$CODEGEN_PATH"
-    echo "Fixed $CODEGEN_PATH"
+CODEGEN_PATH1="node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js"
+if [ -f "$CODEGEN_PATH1" ]; then
+  if ! grep -q "TSBooleanKeyword" "$CODEGEN_PATH1"; then
+    sed -i "/return typeAnnotation;/i\  // Handle TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking\n  if (typeAnnotation && typeAnnotation.type) {\n    switch (typeAnnotation.type) {\n      case 'TSBooleanKeyword':\n        return { ...typeAnnotation, type: 'BooleanTypeAnnotation' };\n      case 'TSStringKeyword':\n        return { ...typeAnnotation, type: 'StringTypeAnnotation' };\n      case 'TSNumberKeyword':\n        return { ...typeAnnotation, type: 'NumberTypeAnnotation' };\n    }\n  }" "$CODEGEN_PATH1"
+    echo "Fixed $CODEGEN_PATH1"
   fi
-done
+fi
+
+CODEGEN_PATH2="node_modules/react-native/node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js"
+if [ -f "$CODEGEN_PATH2" ]; then
+  if ! grep -q "TSBooleanKeyword" "$CODEGEN_PATH2"; then
+    sed -i "/return typeAnnotation;/i\  // Handle TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking\n  if (typeAnnotation && typeAnnotation.type) {\n    switch (typeAnnotation.type) {\n      case 'TSBooleanKeyword':\n        return { ...typeAnnotation, type: 'BooleanTypeAnnotation' };\n      case 'TSStringKeyword':\n        return { ...typeAnnotation, type: 'StringTypeAnnotation' };\n      case 'TSNumberKeyword':\n        return { ...typeAnnotation, type: 'NumberTypeAnnotation' };\n    }\n  }" "$CODEGEN_PATH2"
+    echo "Fixed $CODEGEN_PATH2"
+  fi
+fi
 
 # Fix FullWindowOverlay (try .ts and .tsx)
-FWO_PATHS=("node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.ts" "node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.tsx")
-for FWO_PATH in "${FWO_PATHS[@]}"; do
-  if [ -f "$FWO_PATH" ]; then
-    sed -i "/accessibilityContainerViewIsModal?: boolean;/d" "$FWO_PATH"
-    echo "Fixed $FWO_PATH"
-  fi
-done
+FWO_PATH1="node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.ts"
+if [ -f "$FWO_PATH1" ]; then
+  sed -i "/accessibilityContainerViewIsModal?: boolean;/d" "$FWO_PATH1"
+  echo "Fixed $FWO_PATH1"
+fi
+
+FWO_PATH2="node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.tsx"
+if [ -f "$FWO_PATH2" ]; then
+  sed -i "/accessibilityContainerViewIsModal?: boolean;/d" "$FWO_PATH2"
+  echo "Fixed $FWO_PATH2"
+fi
 
 echo "All fixes applied!"
