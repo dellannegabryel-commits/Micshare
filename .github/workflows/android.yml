@@ -64,6 +64,14 @@ jobs:
         working-directory: ./mobile
         run: bash fix_gradle.sh
 
+      - name: Apply React Native 0.74 patches
+        working-directory: ./mobile
+        run: |
+          for patch in patches/*.patch; do
+            echo "Applying $patch..."
+            patch -p1 < "$patch" || echo "Patch $patch failed (may already be applied)"
+          done
+
       - name: Make gradlew executable
         working-directory: ./mobile/android
         run: chmod +x gradlew
