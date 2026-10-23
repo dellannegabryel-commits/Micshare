@@ -3,19 +3,30 @@ set -e
 
 echo "Applying React Native 0.74 fixes..."
 
-# Fix react-native-gesture-handler
+# Fix react-native-gesture-handler - aggressive approach
 GH_PATH="node_modules/react-native-gesture-handler/android/build.gradle"
 if [ -f "$GH_PATH" ]; then
   echo "Processing $GH_PATH..."
   
-  # Remove ReactAndroid reference - multiple broad patterns
-  sed -i '/ReactAndroid\/gradle\.properties/d' "$GH_PATH"
-  sed -i '/apply from.*ReactAndroid/d' "$GH_PATH"
-  sed -i '/apply from.*gradle\.properties/d' "$GH_PATH"
+  # Read the file and rewrite it more carefully
+  # First, let's see what's in the file around line 90-95
+  echo "=== GH file before fix (lines 85-100) ==="
+  sed -n '85,100p' "$GH_PATH"
   
-  # Add compileSdkVersion if not present in android block
-  if ! grep -A 20 '^android {' "$GH_PATH" | grep -q "compileSdkVersion"; then
-    sed -i '/^android {/a\    compileSdkVersion 34' "$GH_PATH"
+  # Remove/comment any ReactAndroid reference
+  sed -i '/ReactAndroid/s/^/# REMOVED: /' "$GH_PATH"
+  sed -i '/gradle\.properties/s/^/# REMOVED: /' "$GH_PATH"
+  
+  # Force add compileSdkVersion at the very top of android block
+  # Use a more precise pattern
+  if ! grep -A 30 '^android {' "$GH_PATH" | grep -q "compileSdkVersion"; then
+    sed -i '0,/^android {/s//&
+    compileSdkVersion 34/' "$GH_PATH"
+  fi
+  
+  # Also add as ext property at top of file
+  if ! grep -q "ext.compileSdkVersion" "$GH_PATH"; then
+    sed -i '1i ext.compileSdkVersion = 34' "$GH_PATH"
   fi
   
   # Fix kotlin.srcDirs
@@ -26,6 +37,9 @@ if [ -f "$GH_PATH" ]; then
     sed -i "s|kotlin.srcDirs = kotlinSrcDirs|kotlin.srcDirs = kotlinSrcDirs\n        def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]\n        java.srcDirs = javaSrcDirs|g" "$GH_PATH"
   fi
   
+  echo "=== GH file after fix (lines 85-100) ==="
+  sed -n '85,100p' "$GH_PATH"
+  
   echo "Fixed $GH_PATH"
 fi
 
@@ -35,8 +49,14 @@ if [ -f "$SAC_PATH" ]; then
   echo "Processing $SAC_PATH..."
   
   # Add compileSdkVersion if not present in android block
-  if ! grep -A 20 '^android {' "$SAC_PATH" | grep -q "compileSdkVersion"; then
-    sed -i '/^android {/a\    compileSdkVersion 34' "$SAC_PATH"
+  if ! grep -A 30 '^android {' "$SAC_PATH" | grep -q "compileSdkVersion"; then
+    sed -i '0,/^android {/s//&
+    compileSdkVersion 34/' "$SAC_PATH"
+  fi
+  
+  # Add as ext property
+  if ! grep -q "ext.compileSdkVersion" "$SAC_PATH"; then
+    sed -i '1i ext.compileSdkVersion = 34' "$SAC_PATH"
   fi
   
   # Fix java.directories
@@ -56,8 +76,14 @@ if [ -f "$SCREENS_PATH" ]; then
   echo "Processing $SCREENS_PATH..."
   
   # Add compileSdkVersion if not present in android block
-  if ! grep -A 20 '^android {' "$SCREENS_PATH" | grep -q "compileSdkVersion"; then
-    sed -i '/^android {/a\    compileSdkVersion 34' "$SCREENS_PATH"
+  if ! grep -A 30 '^android {' "$SCREENS_PATH" | grep -q "compileSdkVersion"; then
+    sed -i '0,/^android {/s//&
+    compileSdkVersion 34/' "$SCREENS_PATH"
+  fi
+  
+  # Add as ext property
+  if ! grep -q "ext.compileSdkVersion" "$SCREENS_PATH"; then
+    sed -i '1i ext.compileSdkVersion = 34' "$SCREENS_PATH"
   fi
   
   # Disable codegen task
