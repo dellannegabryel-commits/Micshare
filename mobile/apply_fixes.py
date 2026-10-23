@@ -11,42 +11,50 @@ def fix_gesture_handler():
     with open(path, 'r') as f:
         content = f.read()
     
-    # Remove ReactAndroid reference
-    content = content.replace(
-        "apply from: new File(['../node_modules', 'react-native/ReactAndroid/gradle.properties'].join('/'))",
-        "// apply from: ReactAndroid/gradle.properties (not needed in RN 0.74)"
-    )
-    content = content.replace(
-        "apply from: new File(['../node_modules', 'react-native/ReactAndroid', 'gradle.properties'].join('/'))",
-        "// apply from: ReactAndroid/gradle.properties (not needed in RN 0.74)"
-    )
+    original = content
+    
+    # Remove ReactAndroid reference - multiple patterns
+    patterns = [
+        r"apply from: new File\(\['\.\./node_modules', 'react-native/ReactAndroid/gradle\.properties'\]\.join\('/'\)\)",
+        r"apply from: new File\(\['\.\./node_modules', 'react-native/ReactAndroid', 'gradle\.properties'\]\.join\('/'\)\)",
+        r"apply from:.*ReactAndroid.*gradle\.properties",
+    ]
+    for pattern in patterns:
+        content = re.sub(pattern, "// apply from: ReactAndroid/gradle.properties (removed for RN 0.74)", content)
     
     # Add compileSdkVersion if not present
     if 'compileSdkVersion' not in content:
         content = re.sub(
             r'(android\s*\{)',
-            r'\1\n    compileSdkVersion 34',
+            r'
+    compileSdkVersion 34',
             content,
             count=1
         )
     
-    # Fix kotlin.srcDirs
-    if 'kotlin.srcDirs +=' in content:
-        content = content.replace(
-            "kotlin.srcDirs += file('src/main/kotlin').absolutePath",
-            "def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]\n        kotlin.srcDirs = kotlinSrcDirs"
-        )
+    # Fix kotlin.srcDirs - multiple patterns
+    content = re.sub(
+        r"kotlin\.srcDirs\s*\+\=\s*file\(['"]src/main/kotlin['"]\)\.absolutePath",
+        "def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]
+        kotlin.srcDirs = kotlinSrcDirs",
+        content
+    )
     
-    # Add java src dirs
-    if 'java.srcDirs' not in content and 'sourceSets' in content:
+    # Add java src dirs if sourceSets exists
+    if 'sourceSets' in content and 'java.srcDirs' not in content:
         content = content.replace(
             "kotlin.srcDirs = kotlinSrcDirs",
-            "kotlin.srcDirs = kotlinSrcDirs\n        def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]\n        java.srcDirs = javaSrcDirs"
+            "kotlin.srcDirs = kotlinSrcDirs
+        def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]
+        java.srcDirs = javaSrcDirs"
         )
     
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f"Fixed {path}")
+    if content != original:
+        with open(path, 'w') as f:
+            f.write(content)
+        print(f"Fixed {path}")
+    else:
+        print(f"No changes needed for {path}")
 
 def fix_safe_area_context():
     path = "node_modules/react-native-safe-area-context/android/build.gradle"
@@ -57,32 +65,41 @@ def fix_safe_area_context():
     with open(path, 'r') as f:
         content = f.read()
     
+    original = content
+    
     # Add compileSdkVersion if not present
     if 'compileSdkVersion' not in content:
         content = re.sub(
             r'(android\s*\{)',
-            r'\1\n    compileSdkVersion 34',
+            r'
+    compileSdkVersion 34',
             content,
             count=1
         )
     
     # Fix java.directories
-    if 'java.directories +=' in content:
-        content = content.replace(
-            "java.directories += file('src/main/java').absolutePath",
-            "def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]\n        java.srcDirs = javaSrcDirs"
-        )
+    content = re.sub(
+        r"java\.directories\s*\+\=\s*file\(['"]src/main/java['"]\)\.absolutePath",
+        "def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]
+        java.srcDirs = javaSrcDirs",
+        content
+    )
     
     # Add kotlin src dirs
-    if 'kotlin.srcDirs' not in content and 'sourceSets' in content:
+    if 'sourceSets' in content and 'kotlin.srcDirs' not in content:
         content = content.replace(
             "java.srcDirs = javaSrcDirs",
-            "java.srcDirs = javaSrcDirs\n        def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]\n        kotlin.srcDirs = kotlinSrcDirs"
+            "java.srcDirs = javaSrcDirs
+        def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]
+        kotlin.srcDirs = kotlinSrcDirs"
         )
     
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f"Fixed {path}")
+    if content != original:
+        with open(path, 'w') as f:
+            f.write(content)
+        print(f"Fixed {path}")
+    else:
+        print(f"No changes needed for {path}")
 
 def fix_screens():
     path = "node_modules/react-native-screens/android/build.gradle"
@@ -93,11 +110,14 @@ def fix_screens():
     with open(path, 'r') as f:
         content = f.read()
     
+    original = content
+    
     # Add compileSdkVersion if not present
     if 'compileSdkVersion' not in content:
         content = re.sub(
             r'(android\s*\{)',
-            r'\1\n    compileSdkVersion 34',
+            r'
+    compileSdkVersion 34',
             content,
             count=1
         )
@@ -106,52 +126,63 @@ def fix_screens():
     if 'generateCodegenArtifactsFromSchema' not in content:
         content = re.sub(
             r'(defaultConfig\s*\{)',
-            r'    tasks.named(\'generateCodegenArtifactsFromSchema\') { enabled = false }\n\n    \1',
+            r"    tasks.named('generateCodegenArtifactsFromSchema') { enabled = false }
+
+    ",
             content,
             count=1
         )
     
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f"Fixed {path}")
+    if content != original:
+        with open(path, 'w') as f:
+            f.write(content)
+        print(f"Fixed {path}")
+    else:
+        print(f"No changes needed for {path}")
 
 def fix_audio_api():
-    path = "node_modules/react-native-audio-api/android/build.gradle"
-    if not os.path.exists(path):
-        print(f"NOT FOUND: {path}")
-        return
+    # Try multiple possible paths
+    paths = [
+        "node_modules/react-native-audio-api/android/build.gradle",
+        "node_modules/@react-native-community/audio-api/android/build.gradle",
+    ]
     
-    with open(path, 'r') as f:
-        content = f.read()
+    for path in paths:
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                content = f.read()
+            
+            content = content.replace(
+                'minimalReactNativeVersion = 76',
+                'minimalReactNativeVersion = 74'
+            )
+            content = content.replace(
+                'minimalReactNativeVersion = 75',
+                'minimalReactNativeVersion = 74'
+            )
+            
+            with open(path, 'w') as f:
+                f.write(content)
+            print(f"Fixed {path}")
+            return
     
-    # Fix minimalReactNativeVersion
-    content = content.replace(
-        'minimalReactNativeVersion = 76',
-        'minimalReactNativeVersion = 74'
-    )
-    content = content.replace(
-        'minimalReactNativeVersion = 75',
-        'minimalReactNativeVersion = 74'
-    )
-    
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f"Fixed {path}")
+    print("NOT FOUND: react-native-audio-api build.gradle")
 
 def fix_codegen():
-    path = "node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js"
-    if not os.path.exists(path):
-        print(f"NOT FOUND: {path}")
-        return
+    paths = [
+        "node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js",
+        "node_modules/react-native/node_modules/@react-native/codegen/lib/parsers/typescript/components/componentsUtils.js",
+    ]
     
-    with open(path, 'r') as f:
-        content = f.read()
-    
-    # Add handling for TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking
-    if 'TSBooleanKeyword' not in content:
-        content = content.replace(
-            '  return typeAnnotation;',
-            '''  // Handle TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking
+    for path in paths:
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                content = f.read()
+            
+            if 'TSBooleanKeyword' not in content:
+                content = content.replace(
+                    '  return typeAnnotation;',
+                    '''  // Handle TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking
   if (typeAnnotation && typeAnnotation.type) {
     switch (typeAnnotation.type) {
       case 'TSBooleanKeyword':
@@ -163,31 +194,40 @@ def fix_codegen():
     }
   }
   return typeAnnotation;'''
-        )
+                )
+            
+            with open(path, 'w') as f:
+                f.write(content)
+            print(f"Fixed {path}")
+            return
     
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f"Fixed {path}")
+    print("NOT FOUND: codegen componentsUtils.js")
 
 def fix_full_window_overlay():
-    path = "node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.ts"
-    if not os.path.exists(path):
-        print(f"NOT FOUND: {path}")
-        return
+    paths = [
+        "node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.ts",
+        "node_modules/react-native-screens/src/fabric/FullWindowOverlayNativeComponent.tsx",
+    ]
     
-    with open(path, 'r') as f:
-        content = f.read()
+    for path in paths:
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                content = f.read()
+            
+            # Remove accessibilityContainerViewIsModal line
+            content = re.sub(
+                r'  accessibilityContainerViewIsModal\?:\s*boolean;
+',
+                '',
+                content
+            )
+            
+            with open(path, 'w') as f:
+                f.write(content)
+            print(f"Fixed {path}")
+            return
     
-    # Remove accessibilityContainerViewIsModal line
-    content = re.sub(
-        r'  accessibilityContainerViewIsModal\?:\s*boolean;\n',
-        '',
-        content
-    )
-    
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f"Fixed {path}")
+    print("NOT FOUND: FullWindowOverlayNativeComponent")
 
 if __name__ == "__main__":
     fix_gesture_handler()
