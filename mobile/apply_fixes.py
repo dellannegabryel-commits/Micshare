@@ -25,8 +25,7 @@ def fix_gesture_handler():
     if 'compileSdkVersion' not in content:
         content = re.sub(
             r'(android\s*\{)',
-            r'
-    compileSdkVersion 34',
+            r'\1\n    compileSdkVersion 34',
             content,
             count=1
         )
@@ -35,17 +34,14 @@ def fix_gesture_handler():
     if 'kotlin.srcDirs +=' in content:
         content = content.replace(
             "kotlin.srcDirs += file('src/main/kotlin').absolutePath",
-            "def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]
-        kotlin.srcDirs = kotlinSrcDirs"
+            "def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]\n        kotlin.srcDirs = kotlinSrcDirs"
         )
     
     # Add java src dirs
     if 'java.srcDirs' not in content and 'sourceSets' in content:
         content = content.replace(
             "kotlin.srcDirs = kotlinSrcDirs",
-            "kotlin.srcDirs = kotlinSrcDirs
-        def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]
-        java.srcDirs = javaSrcDirs"
+            "kotlin.srcDirs = kotlinSrcDirs\n        def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]\n        java.srcDirs = javaSrcDirs"
         )
     
     with open(path, 'w') as f:
@@ -65,8 +61,7 @@ def fix_safe_area_context():
     if 'compileSdkVersion' not in content:
         content = re.sub(
             r'(android\s*\{)',
-            r'
-    compileSdkVersion 34',
+            r'\1\n    compileSdkVersion 34',
             content,
             count=1
         )
@@ -75,17 +70,14 @@ def fix_safe_area_context():
     if 'java.directories +=' in content:
         content = content.replace(
             "java.directories += file('src/main/java').absolutePath",
-            "def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]
-        java.srcDirs = javaSrcDirs"
+            "def javaSrcDirs = java.srcDirs + [file('src/main/java').absolutePath]\n        java.srcDirs = javaSrcDirs"
         )
     
     # Add kotlin src dirs
     if 'kotlin.srcDirs' not in content and 'sourceSets' in content:
         content = content.replace(
             "java.srcDirs = javaSrcDirs",
-            "java.srcDirs = javaSrcDirs
-        def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]
-        kotlin.srcDirs = kotlinSrcDirs"
+            "java.srcDirs = javaSrcDirs\n        def kotlinSrcDirs = kotlin.srcDirs + [file('src/main/kotlin').absolutePath]\n        kotlin.srcDirs = kotlinSrcDirs"
         )
     
     with open(path, 'w') as f:
@@ -105,8 +97,7 @@ def fix_screens():
     if 'compileSdkVersion' not in content:
         content = re.sub(
             r'(android\s*\{)',
-            r'
-    compileSdkVersion 34',
+            r'\1\n    compileSdkVersion 34',
             content,
             count=1
         )
@@ -115,9 +106,7 @@ def fix_screens():
     if 'generateCodegenArtifactsFromSchema' not in content:
         content = re.sub(
             r'(defaultConfig\s*\{)',
-            r'    tasks.named('generateCodegenArtifactsFromSchema') { enabled = false }
-
-    ',
+            r'    tasks.named(\'generateCodegenArtifactsFromSchema\') { enabled = false }\n\n    \1',
             content,
             count=1
         )
@@ -160,7 +149,6 @@ def fix_codegen():
     
     # Add handling for TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking
     if 'TSBooleanKeyword' not in content:
-        # Find the return typeAnnotation; line and add before it
         content = content.replace(
             '  return typeAnnotation;',
             '''  // Handle TSBooleanKeyword, TSStringKeyword, TSNumberKeyword after WithDefault unpacking
@@ -192,8 +180,7 @@ def fix_full_window_overlay():
     
     # Remove accessibilityContainerViewIsModal line
     content = re.sub(
-        r'  accessibilityContainerViewIsModal\?:\s*boolean;
-',
+        r'  accessibilityContainerViewIsModal\?:\s*boolean;\n',
         '',
         content
     )
