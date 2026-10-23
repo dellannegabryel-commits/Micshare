@@ -3,11 +3,10 @@ set -e
 
 echo "Fixing build.gradle properties..."
 
-# Fix root build.gradle
+# Fix root build.gradle - only REACT_NATIVE_NODE_MODULES_DIR
 if [ -f "android/build.gradle" ]; then
   if ! grep -q "REACT_NATIVE_NODE_MODULES_DIR" android/build.gradle; then
-    # Add at the top of the file, before plugins block
-    sed -i '1iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")ext.compileSdkVersion = 34' android/build.gradle
+    sed -i '1iext.REACT_NATIVE_NODE_MODULES_DIR = new File(rootProject.projectDir, "../node_modules")' android/build.gradle
     echo "Fixed root build.gradle"
   fi
 fi
