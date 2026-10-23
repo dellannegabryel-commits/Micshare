@@ -6,12 +6,15 @@ echo "Applying React Native 0.74 fixes..."
 # Fix react-native-gesture-handler
 GH_PATH="node_modules/react-native-gesture-handler/android/build.gradle"
 if [ -f "$GH_PATH" ]; then
-  # Remove ReactAndroid reference
-  sed -i "s|apply from: new File(\[.*ReactAndroid.*gradle\.properties.*\])|// apply from: ReactAndroid/gradle.properties (removed for RN 0.74)|g" "$GH_PATH"
-  sed -i "s|apply from: new File(\[.*react-native/ReactAndroid.*gradle\.properties.*\])|// apply from: ReactAndroid/gradle.properties (removed for RN 0.74)|g" "$GH_PATH"
+  echo "Processing $GH_PATH..."
   
-  # Add compileSdkVersion if not present
-  if ! grep -q "compileSdkVersion" "$GH_PATH"; then
+  # Remove ReactAndroid reference - multiple broad patterns
+  sed -i '/ReactAndroid\/gradle\.properties/d' "$GH_PATH"
+  sed -i '/apply from.*ReactAndroid/d' "$GH_PATH"
+  sed -i '/apply from.*gradle\.properties/d' "$GH_PATH"
+  
+  # Add compileSdkVersion if not present in android block
+  if ! grep -A 20 '^android {' "$GH_PATH" | grep -q "compileSdkVersion"; then
     sed -i '/^android {/a\    compileSdkVersion 34' "$GH_PATH"
   fi
   
@@ -29,8 +32,10 @@ fi
 # Fix react-native-safe-area-context
 SAC_PATH="node_modules/react-native-safe-area-context/android/build.gradle"
 if [ -f "$SAC_PATH" ]; then
-  # Add compileSdkVersion if not present
-  if ! grep -q "compileSdkVersion" "$SAC_PATH"; then
+  echo "Processing $SAC_PATH..."
+  
+  # Add compileSdkVersion if not present in android block
+  if ! grep -A 20 '^android {' "$SAC_PATH" | grep -q "compileSdkVersion"; then
     sed -i '/^android {/a\    compileSdkVersion 34' "$SAC_PATH"
   fi
   
@@ -48,8 +53,10 @@ fi
 # Fix react-native-screens
 SCREENS_PATH="node_modules/react-native-screens/android/build.gradle"
 if [ -f "$SCREENS_PATH" ]; then
-  # Add compileSdkVersion if not present
-  if ! grep -q "compileSdkVersion" "$SCREENS_PATH"; then
+  echo "Processing $SCREENS_PATH..."
+  
+  # Add compileSdkVersion if not present in android block
+  if ! grep -A 20 '^android {' "$SCREENS_PATH" | grep -q "compileSdkVersion"; then
     sed -i '/^android {/a\    compileSdkVersion 34' "$SCREENS_PATH"
   fi
   
