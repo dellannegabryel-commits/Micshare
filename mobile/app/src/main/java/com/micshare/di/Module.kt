@@ -26,6 +26,7 @@ val appModule: Module = module {
     viewModel { DiscoveryViewModel(get()) }
     viewModel { (ip: String, audioPort: Int, ctrlPort: Int, sessionId: String, pcName: String) ->
         AudioViewModel(
+            application = get(),
             ip = ip,
             audioPort = audioPort,
             ctrlPort = ctrlPort,
@@ -40,7 +41,6 @@ val appModule: Module = module {
 
 fun startKoin(context: Context) {
     if (GlobalContext.getOrNull() != null) {
-        // Koin already started, skip re-initialization
         return
     }
     startKoinCore {

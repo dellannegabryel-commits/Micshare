@@ -20,14 +20,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,6 +69,17 @@ fun AudioScreen(
     val gaps by viewModel.statsGaps.collectAsStateWithLifecycle()
     val reconns by viewModel.statsReconnects.collectAsStateWithLifecycle()
     val currentMicSource by viewModel.micSourceIndex.collectAsStateWithLifecycle()
+    val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+
+    if (keepScreenOn) {
+        val view = LocalView.current
+        DisposableEffect(Unit) {
+            view.keepScreenOn = true
+            onDispose {
+                view.keepScreenOn = false
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -113,9 +127,9 @@ fun AudioScreen(
             variant = if (muted) ButtonVariant.Danger else ButtonVariant.Primary,
             size = ButtonSize.Large,
             modifier = Modifier
-                .padding(vertical = MicshareSpacing.Md)
-                .width(280.dp)
-                .height(100.dp),
+                .padding(vertical = MicshareSpacing.Sm)
+                .width(260.dp)
+                .height(90.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -149,6 +163,39 @@ fun AudioScreen(
                     valueRange = 0.0f..4.0f,
                     steps = 40,
                     modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
+        // Keep Screen On Switch section
+        MicshareCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = MicshareSpacing.ScreenHorizontal),
+            variant = CardVariant.Primary,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(MicshareSpacing.Md),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(
+                        text = "Manter tela acesa",
+                        style = MicshareTypography.LabelLarge,
+                        color = MicshareColors.TextPrimary,
+                    )
+                    Text(
+                        text = "Evita que a tela apague ao transmitir",
+                        style = MicshareTypography.BodySmall,
+                        color = MicshareColors.TextTertiary,
+                    )
+                }
+                Switch(
+                    checked = keepScreenOn,
+                    onCheckedChange = { viewModel.setKeepScreenOn(it) },
                 )
             }
         }
