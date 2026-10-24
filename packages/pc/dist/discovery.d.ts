@@ -3,7 +3,6 @@ export interface DiscoveryConfig {
     instanceName: string;
     audioPort: number;
     ctrlPort: number;
-    pairingCode: string;
     ttlMs?: number;
 }
 export declare class OptionalDiscovery {
@@ -17,14 +16,15 @@ export interface BeaconConfig {
     name: string;
     audioPort: number;
     ctrlPort: number;
-    pairingCode: string;
 }
 export declare class BeaconSender {
     private config;
     private socket;
     private interval;
     private bound;
+    private broadcastAddresses;
     constructor(config: BeaconConfig);
+    private discoverBroadcastAddresses;
     start(): void;
     private send;
     stop(): void;

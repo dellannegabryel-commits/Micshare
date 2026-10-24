@@ -1,10 +1,9 @@
 export interface ControlConfig {
     port: number;
-    pairingCode: string;
-    onHello: (token: string, sessionId: string) => Promise<boolean>;
     onMute: (value: boolean) => void;
     onVolume: (value: number) => void;
     onBye: (sessionId: string) => void;
+    onHello?: (sessionId: string) => void;
 }
 export declare class ControlServer {
     private config;

@@ -17,11 +17,31 @@ export class AudioSink {
             throw new Error(`naudiodon2 não disponível: ${err.message}. Instale com: npm install naudiodon2`);
         }
         const devices = naudiodon2.getDevices();
-        // Filtrar apenas dispositivos de saída (maxOutputChannels > 0)
+        // Log all output devices for debugging
         const outputDevices = devices.filter((d) => d.maxOutputChannels > 0);
         if (outputDevices.length === 0)
             throw new Error('nenhum dispositivo de saída encontrado');
-        let device = outputDevices.find((d) => d.name.includes(this.config.deviceSubstring || 'CABLE'));
+        console.log('[sink] Dispositivos de saída disponíveis:');
+        for (const d of outputDevices) {
+            console.log(`  [${d.id}] ${d.name} (maxOutputChannels=${d.maxOutputChannels})`);
+        }
+        // Try to find VB-Cable with broader matching
+        let device = outputDevices.find((d) => {
+            const name = d.name.toLowerCase();
+            return name.includes('cable') ||
+                name.includes('vb-audio') ||
+                name.includes('vb audio') ||
+                name.includes('virtual') ||
+                name.includes('vbcable');
+        });
+        // If --device substring provided, use that instead
+        if (this.config.deviceSubstring) {
+            const userDevice = outputDevices.find((d) => d.name.toLowerCase().includes(this.config.deviceSubstring.toLowerCase()));
+            if (userDevice) {
+                device = userDevice;
+                console.log(`[sink] Usando dispositivo especificado pelo usuário: ${device.name}`);
+            }
+        }
         if (!device)
             device = outputDevices[0];
         console.log(`[sink] usando dispositivo: ${device.name} (id=${device.id}, maxOutputChannels=${device.maxOutputChannels})`);

@@ -1,7 +1,7 @@
+export declare function checkVBCableAvailable(): boolean;
 export interface ServerConfig {
     audioPort?: number;
     deviceSubstring?: string;
-    pairingCode?: string;
     verbose?: boolean;
     name?: string;
 }
@@ -15,9 +15,14 @@ export declare class AudioServer {
     private sinkInterval;
     private beacon;
     private started;
+    private sessionCount;
+    private lastStatsLine;
+    private statsUpdateInterval;
     constructor(config?: ServerConfig);
     private setupErrorHandlers;
     start(): Promise<void>;
-    private maybeLogStats;
+    private onSessionEnd;
+    private printStatusLine;
+    maybeLogStats(): void;
     stop(): void;
 }

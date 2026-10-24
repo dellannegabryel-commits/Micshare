@@ -9,70 +9,72 @@ export class ControlServer {
         this.config = config;
     }
     start() {
-        this.wss = new WebSocketServer({ port: this.config.port });
+        // Bind WebSocket to 0.0.0.0 to accept connections from all interfaces
+        this.wss = new WebSocketServer({
+            port: this.config.port,
+            host: '0.0.0.0'
+        });
         this.wss.on('error', (err) => {
             console.error('[controle] WebSocket server error:', err.message);
         });
         this.wss.on('connection', (ws) => {
+            // Auto-authenticate on Hello - no pairing code needed for MVP
             let sessionId = null;
             let authenticated = false;
             ws.on('message', (data) => {
                 try {
+                    // Ignore binary frames (pong, etc.) and empty messages
+                    if (!Buffer.isBuffer(data) && typeof data !== 'string') {
+                        return;
+                    }
                     const text = data.toString();
+                    if (!text.trim()) {
+                        return;
+                    }
+                    console.log('[controle] RX:', text);
                     const { message, error } = parseCtrl(text);
                     if (error || !message) {
+                        console.log('[controle] Parse error:', error);
                         ws.send(encodeCtrl({ t: 'error', code: 'bad_message', message: error || 'invalid' }));
                         return;
                     }
                     switch (message.t) {
                         case 'hello': {
-                            const ok = this.config.onHello(message.token, crypto.randomUUID().slice(0, 8));
-                            ok.then((accepted) => {
-                                try {
-                                    if (!accepted) {
-                                        ws.send(encodeCtrl({ t: 'error', code: 'bad_token', message: 'código de pareamento inválido' }));
-                                        ws.close();
-                                        return;
-                                    }
-                                    authenticated = true;
-                                    sessionId = crypto.randomUUID().slice(0, 8);
-                                    this.sessions.set(sessionId, ws);
-                                    ws.send(encodeCtrl({
-                                        t: 'welcome',
-                                        sessionId,
-                                        audioPort: 41235,
-                                        targetBufferMs: 30,
-                                    }));
-                                }
-                                catch (err) {
-                                    console.error('[controle] Error in hello handler:', err.message);
-                                    ws.close();
-                                }
-                            }).catch((err) => {
-                                console.error('[controle] Error in onHello promise:', err.message);
-                                ws.close();
-                            });
+                            if (!authenticated) {
+                                sessionId = crypto.randomUUID().slice(0, 8);
+                                authenticated = true;
+                                this.sessions.set(sessionId, ws);
+                                const welcome = {
+                                    t: 'welcome',
+                                    sessionId,
+                                    audioPort: 41235,
+                                    targetBufferMs: 30,
+                                };
+                                console.log('[controle] TX welcome:', JSON.stringify(welcome));
+                                ws.send(encodeCtrl(welcome));
+                                this.config.onHello?.(sessionId);
+                            }
                             break;
                         }
                         case 'mute': {
-                            if (!authenticated)
-                                return;
-                            try {
-                                this.config.onMute(message.value);
-                            }
-                            catch (err) {
-                                console.error('[controle] Error in onMute:', err.message);
+                            if (sessionId && this.sessions.has(sessionId)) {
+                                try {
+                                    this.config.onMute(message.value);
+                                }
+                                catch (err) {
+                                    console.error('[controle] Error in onMute:', err.message);
+                                }
                             }
                             break;
                         }
                         case 'volume': {
-                            if (!authenticated)
-                                return;
-                            try {
-                                this.config.onVolume(Math.max(0, Math.min(4, message.value)));
-                            }
-                            catch (err) {
-                                console.error('[controle] Error in onVolume:', err.message);
+                            if (sessionId && this.sessions.has(sessionId)) {
+                                try {
+                                    this.config.onVolume(Math.max(0, Math.min(4, message.value)));
+                                }
+                                catch (err) {
+                                    console.error('[controle] Error in onVolume:', err.message);
+                                }
                             }
                             break;
                         }
@@ -85,7 +87,9 @@ export class ControlServer {
                             break;
                         }
                         default:
-                            ws.send(encodeCtrl({ t: 'error', code: 'unknown', message: `tipo ${message.t} não tratado` }));
+                            if (sessionId) {
+                                ws.send(encodeCtrl({ t: 'error', code: 'unknown', message: `tipo ${message.t} não tratado` }));
+                            }
                     }
                 }
                 catch (err) {
@@ -105,7 +109,7 @@ export class ControlServer {
             });
         });
         this.wss.on('listening', () => {
-            console.log(`[controle] WebSocket server listening on port ${this.config.port}`);
+            // console.log(`[controle] WebSocket server listening on 0.0.0.0:${this.config.port}`);
         });
     }
     broadcastStats(stats) {

@@ -11,16 +11,9 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.micshare.R
-import com.micshare.audio.AudioCapture
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicReference
 
 class AudioCaptureService : Service() {
-    private val capture = AudioCapture()
     private var notificationManager: NotificationManager? = null
-    private val frameCallbackRef = AtomicReference<((ShortArray) -> Unit)?>(null)
 
     companion object {
         const val CHANNEL_ID = "micshare_capture"
@@ -78,22 +71,9 @@ class AudioCaptureService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
-        val callback: (ShortArray) -> Unit = { frame ->
-            frameCallbackRef.get()?.invoke(frame)
-        }
-        frameCallbackRef.set(callback)
-
-        CoroutineScope(Dispatchers.IO).launch {
-            capture.start { frame ->
-                frameCallbackRef.get()?.invoke(frame)
-            }
-        }
     }
 
     private fun stopCapture() {
-        capture.stop()
-        frameCallbackRef.set(null)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -102,12 +82,6 @@ class AudioCaptureService : Service() {
         }
         stopSelf()
     }
-
-    fun setFrameCallback(callback: ((ShortArray) -> Unit)?) {
-        frameCallbackRef.set(callback)
-    }
-
-    fun isCapturing(): Boolean = capture.isRunning()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
