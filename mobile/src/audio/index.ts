@@ -1,1 +1,0 @@
-export { audioCapture, AudioCapture, type CaptureCallbacks } from './audioCapture';

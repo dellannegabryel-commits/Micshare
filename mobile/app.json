@@ -41,6 +41,8 @@
         "android.permission.CHANGE_WIFI_MULTICAST_STATE"
       ]
     },
-    "plugins": []
+    "plugins": [
+      "react-native-live-audio-stream"
+    ]
   }
 }

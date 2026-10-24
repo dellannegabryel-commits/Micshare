@@ -15,22 +15,55 @@ export class AudioServer {
     control = null;
     sinkInterval = null;
     beacon = null;
+    started = false;
     constructor(config = {}) {
         this.config = config;
+        this.setupErrorHandlers();
+    }
+    setupErrorHandlers() {
+        // Handle socket errors
+        this.socket.on('error', (err) => {
+            console.error('[micshare] UDP socket error:', err.message);
+        });
+        // Handle process-level errors
+        process.on('uncaughtException', (err) => {
+            console.error('[micshare] Uncaught exception:', err.message, err.stack);
+            this.stop();
+            process.exit(1);
+        });
+        process.on('unhandledRejection', (reason) => {
+            console.error('[micshare] Unhandled rejection:', reason);
+            this.stop();
+            process.exit(1);
+        });
     }
     async start() {
+        if (this.started) {
+            console.warn('[micshare] Server already started');
+            return;
+        }
         const port = this.config.audioPort ?? AUDIO_PORT;
         await new Promise((resolve, reject) => {
             this.socket.bind(port, (err) => {
-                if (err)
+                if (err) {
+                    console.error('[micshare] Failed to bind UDP socket:', err.message);
                     reject(err);
-                else
+                }
+                else {
                     resolve();
+                }
             });
         });
         const addr = this.socket.address();
-        this.sink = new AudioSink({ deviceSubstring: this.config.deviceSubstring });
-        await this.sink.open();
+        try {
+            this.sink = new AudioSink({ deviceSubstring: this.config.deviceSubstring });
+            await this.sink.open();
+        }
+        catch (err) {
+            console.error('[micshare] Failed to open audio sink:', err.message);
+            this.stop();
+            throw err;
+        }
         this.control = new ControlServer({
             port: 41236,
             pairingCode: this.config.pairingCode ?? '',
@@ -50,23 +83,34 @@ export class AudioServer {
         });
         this.beacon.start();
         this.socket.on('message', (buf, rinfo) => {
-            const frame = decodeAudioFrame(buf);
-            if (!frame)
-                return;
-            this.jitter.push(frame.header.seq, frame.header.captureTs, frame.payload);
+            try {
+                const frame = decodeAudioFrame(buf);
+                if (!frame)
+                    return;
+                this.jitter.push(frame.header.seq, frame.header.captureTs, frame.payload);
+            }
+            catch (err) {
+                console.error('[micshare] Error processing audio frame:', err.message);
+            }
         });
         // Loop de reprodução: puxa do jitter buffer a cada 10 ms
         this.sinkInterval = setInterval(() => {
-            const pcm = this.jitter.pop();
-            if (pcm) {
-                const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2);
-                this.sink.write(samples);
+            try {
+                const pcm = this.jitter.pop();
+                if (pcm) {
+                    const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2);
+                    this.sink.write(samples);
+                }
+                else {
+                    this.sink.writeSilence();
+                }
+                this.maybeLogStats();
             }
-            else {
-                this.sink.writeSilence();
+            catch (err) {
+                console.error('[micshare] Error in audio playback loop:', err.message);
             }
-            this.maybeLogStats();
         }, 10);
+        this.started = true;
         console.log(`[micshare] servidor de áudio UDP na porta ${addr.port}`);
         console.log(`[micshare] controle WebSocket na porta 41236`);
         console.log(`[micshare] beacon ativo: ${hostname}:${addr.port}`);
@@ -75,17 +119,25 @@ export class AudioServer {
     maybeLogStats() {
         if (!this.config.verbose)
             return;
-        const m = this.jitter.getMetrics();
-        const snapshot = this.metrics.update(m.received, m);
-        console.log(`[stats] fps=${snapshot.fps} loss=${snapshot.lossPct}% gaps=${snapshot.gaps} ` +
-            `buffer=${snapshot.bufferMs}ms underruns=${snapshot.underruns} ff=${snapshot.fastForwards} flush=${snapshot.flushes}`);
+        try {
+            const m = this.jitter.getMetrics();
+            const snapshot = this.metrics.update(m.received, m);
+            console.log(`[stats] fps=${snapshot.fps} loss=${snapshot.lossPct}% gaps=${snapshot.gaps} ` +
+                `buffer=${snapshot.bufferMs}ms underruns=${snapshot.underruns} ff=${snapshot.fastForwards} flush=${snapshot.flushes}`);
+        }
+        catch (err) {
+            console.error('[micshare] Error logging stats:', err.message);
+        }
     }
     stop() {
-        if (this.sinkInterval)
+        if (this.sinkInterval) {
             clearInterval(this.sinkInterval);
+            this.sinkInterval = null;
+        }
         this.sink?.close();
         this.control?.stop();
         this.beacon?.stop();
         this.socket.close();
+        this.started = false;
     }
 }

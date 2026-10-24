@@ -14,7 +14,9 @@ export declare class AudioServer {
     private control;
     private sinkInterval;
     private beacon;
+    private started;
     constructor(config?: ServerConfig);
+    private setupErrorHandlers;
     start(): Promise<void>;
     private maybeLogStats;
     stop(): void;

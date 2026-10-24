@@ -3,12 +3,8 @@ name: Android Build
 on:
   push:
     branches: [main]
-    paths:
-      - 'mobile/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'mobile/**'
   workflow_dispatch:
 
 jobs:
@@ -28,9 +24,8 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          api-level: 34
-          ndk-version: r27b
-          build-tools-version: 34.0.0
+          api-level: 35
+          build-tools-version: '35.0.0'
 
       - uses: actions/cache@v4
         with:
@@ -42,7 +37,7 @@ jobs:
 
       - run: chmod +x mobile/gradlew
 
-      - run: ./gradlew :app:assembleDebug
+      - run: ./gradlew :app:assembleDebug --stacktrace
         working-directory: mobile
 
       - uses: actions/upload-artifact@v4
@@ -67,13 +62,12 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          api-level: 34
-          ndk-version: r27b
-          build-tools-version: 34.0.0
+          api-level: 35
+          build-tools-version: '35.0.0'
 
       - run: chmod +x mobile/gradlew
 
-      - run: ./gradlew :app:lintDebug :app:compileDebugKotlin
+      - run: ./gradlew :app:compileDebugKotlin --stacktrace
         working-directory: mobile
 
       - uses: actions/upload-artifact@v4

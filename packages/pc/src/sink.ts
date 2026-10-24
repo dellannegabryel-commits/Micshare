@@ -15,7 +15,13 @@ export class AudioSink {
   constructor(private config: SinkConfig = {}) {}
 
   async open(): Promise<void> {
-    const naudiodon2 = await import('naudiodon2');
+    let naudiodon2: any;
+    try {
+      naudiodon2 = await import('naudiodon2');
+    } catch (err) {
+      throw new Error(`naudiodon2 não disponível: ${(err as Error).message}. Instale com: npm install naudiodon2`);
+    }
+
     const devices = naudiodon2.getDevices();
 
     // Filtrar apenas dispositivos de saída (maxOutputChannels > 0)
@@ -52,9 +58,19 @@ export class AudioSink {
 
     this.audioOutput.on('error', (err: Error) => {
       console.error('[sink] PortAudio error:', err.message);
+      // Não crashar o processo, apenas logar
     });
 
-    this.audioOutput.start();
+    this.audioOutput.on('close', () => {
+      console.log('[sink] PortAudio closed');
+    });
+
+    try {
+      this.audioOutput.start();
+    } catch (err) {
+      console.error('[sink] falha ao iniciar PortAudio:', (err as Error).message);
+      throw err;
+    }
   }
 
   write(samples: Int16Array): void {
@@ -77,7 +93,11 @@ export class AudioSink {
   close(): void {
     this.closed = true;
     if (this.audioOutput) {
-      this.audioOutput.quit();
+      try {
+        this.audioOutput.quit();
+      } catch (err) {
+        console.error('[sink] erro ao fechar PortAudio:', (err as Error).message);
+      }
       this.audioOutput = null;
     }
     this.buffer = [];

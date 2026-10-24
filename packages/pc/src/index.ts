@@ -12,7 +12,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--verbose') config.verbose = true;
   else if (a === '--list-devices') {
     try {
-      const naudiodon2 = require('naudiodon2');
+      const naudiodon2 = await import('naudiodon2');
       const devices = naudiodon2.getDevices();
       console.log('Dispositivos de saída de áudio:');
       for (const d of devices) console.log(`  [${d.id}] ${d.name} (maxOutputChannels=${d.maxOutputChannels})`);
