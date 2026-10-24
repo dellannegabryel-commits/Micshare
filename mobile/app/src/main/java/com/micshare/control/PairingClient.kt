@@ -18,19 +18,23 @@ class PairingClient(
     private val ctrlPort: Int
 ) {
     private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .pingInterval(10, TimeUnit.SECONDS)
         .build()
 
     suspend fun connect(token: String): PairingResult = suspendCancellableCoroutine { continuation ->
         val url = "ws://$ip:$ctrlPort"
+        println("[PairingClient] Connecting to $url")
         val request = Request.Builder().url(url).build()
         val webSocketRef = AtomicReference<WebSocket?>(null)
 
         val timeoutJob = CoroutineScope(Dispatchers.IO).launch {
-            delay(5000)
+            delay(15000) // 15s timeout
             if (continuation.isActive) {
+                println("[PairingClient] Connection timeout (15s) to $url")
                 webSocketRef.get()?.close(1000, "timeout")
-                continuation.resume(PairingResult(false, error = "Timeout de conexão (5s)"))
+                continuation.resume(PairingResult(false, error = "Timeout (15s) para $url. Verifique IP e rede."))
             }
         }
 
@@ -41,6 +45,7 @@ class PairingClient(
 
         val ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                println("[PairingClient] WebSocket opened to $url")
                 val hello = CtrlMessage.Hello(
                     v = 1,
                     token = token,
@@ -53,6 +58,7 @@ class PairingClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                println("[PairingClient] Received message: $text")
                 val message = CtrlMessage.parse(text)
                 message?.let {
                     when (it) {
@@ -76,14 +82,16 @@ class PairingClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                println("[PairingClient] WebSocket failure: ${t.javaClass.simpleName} - ${t.message}")
                 timeoutJob.cancel()
                 if (continuation.isActive) {
-                    continuation.resume(PairingResult(false, error = "Erro de conexão WebSocket: ${t.message}"))
+                    val errorDesc = "${t.javaClass.simpleName}: ${t.message ?: "Conexão recusada"}"
+                    continuation.resume(PairingResult(false, error = errorDesc))
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                // Handled by message
+                println("[PairingClient] WebSocket closed: $code / $reason")
             }
         })
         webSocketRef.set(ws)

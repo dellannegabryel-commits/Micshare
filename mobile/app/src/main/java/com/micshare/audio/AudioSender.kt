@@ -27,9 +27,10 @@ class AudioSender(
         return try {
             address = InetAddress.getByName(targetIp)
             socket = DatagramSocket()
+            println("[AudioSender] UDP socket ready, targeting $targetIp:$targetPort")
             true
         } catch (e: Exception) {
-            println("[sender] socket init error: ${e.message}")
+            println("[AudioSender] socket init error: ${e.message}")
             isRunning.set(false)
             false
         }
@@ -63,13 +64,15 @@ class AudioSender(
         val frame = AudioFrameData(header, payload)
         val encoded = AudioFrame.encode(frame)
 
-        // Send directly on the caller thread (already on Dispatchers.IO in AudioCapture)
         try {
             val packet = DatagramPacket(encoded, encoded.size, targetAddr, targetPort)
             currentSocket.send(packet)
+            if (currentSeq % 100 == 0) {
+                println("[AudioSender] Sent audio frame #$currentSeq (${encoded.size} bytes) to $targetIp:$targetPort")
+            }
         } catch (e: Exception) {
             if (isRunning.get()) {
-                println("[sender] send error: ${e.message}")
+                println("[AudioSender] send error: ${e.message}")
             }
         }
     }
@@ -83,7 +86,7 @@ class AudioSender(
         try {
             socket?.close()
         } catch (e: Exception) {
-            println("[sender] close error: ${e.message}")
+            println("[AudioSender] close error: ${e.message}")
         }
         socket = null
     }

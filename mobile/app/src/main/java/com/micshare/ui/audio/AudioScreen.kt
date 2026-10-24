@@ -65,6 +65,7 @@ fun AudioScreen(
     val buffer by viewModel.statsBuffer.collectAsStateWithLifecycle()
     val gaps by viewModel.statsGaps.collectAsStateWithLifecycle()
     val reconns by viewModel.statsReconnects.collectAsStateWithLifecycle()
+    val currentMicSource by viewModel.micSourceIndex.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -112,9 +113,9 @@ fun AudioScreen(
             variant = if (muted) ButtonVariant.Danger else ButtonVariant.Primary,
             size = ButtonSize.Large,
             modifier = Modifier
-                .padding(vertical = MicshareSpacing.Xl)
+                .padding(vertical = MicshareSpacing.Md)
                 .width(280.dp)
-                .height(120.dp),
+                .height(100.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -135,13 +136,13 @@ fun AudioScreen(
                 .padding(horizontal = MicshareSpacing.ScreenHorizontal),
             variant = CardVariant.Primary,
         ) {
-            Column(modifier = Modifier.padding(MicshareSpacing.Lg)) {
+            Column(modifier = Modifier.padding(MicshareSpacing.Md)) {
                 Text(
                     text = "Volume: ${(volume * 100).toInt()}%",
                     style = MicshareTypography.LabelLarge,
                     color = MicshareColors.TextPrimary,
                 )
-                Spacer(modifier = Modifier.height(MicshareSpacing.Md))
+                Spacer(modifier = Modifier.height(MicshareSpacing.Sm))
                 MicshareSlider(
                     value = volume.toFloat(),
                     onValueChange = { viewModel.setVolume(it.toDouble()) },
@@ -149,6 +150,44 @@ fun AudioScreen(
                     steps = 40,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+        }
+
+        // Mic Source section
+        MicshareCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = MicshareSpacing.ScreenHorizontal),
+            variant = CardVariant.Primary,
+        ) {
+            Column(modifier = Modifier.padding(MicshareSpacing.Md)) {
+                Text(
+                    text = "Processamento do Microfone",
+                    style = MicshareTypography.LabelLarge,
+                    color = MicshareColors.TextPrimary,
+                )
+                Spacer(modifier = Modifier.height(MicshareSpacing.Sm))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val sources = listOf("VoIP (AEC)", "Reconhecimento", "Padrão")
+                    sources.forEachIndexed { index, label ->
+                        Button(
+                            onClick = { viewModel.setMicSource(index) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (currentMicSource == index) MicshareColors.BrandPrimary else MicshareColors.BackgroundTertiary,
+                                contentColor = Color.White,
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
             }
         }
 
@@ -200,16 +239,14 @@ fun AudioScreen(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = Logout,
                     contentDescription = null,
                     tint = MicshareColors.Error,
-                    modifier = Modifier
-                        .size(MicshareSpacing.IconMd)
-                        .padding(end = MicshareSpacing.Sm),
+                    modifier = Modifier.size(MicshareSpacing.IconMd),
                 )
                 Text(
                     text = "Desconectar",

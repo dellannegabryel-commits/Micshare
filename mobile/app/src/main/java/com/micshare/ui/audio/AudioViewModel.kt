@@ -1,5 +1,6 @@
 package com.micshare.ui.audio
 
+import android.media.MediaRecorder
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -52,6 +53,9 @@ class AudioViewModel(
     private val _statsReconnects = MutableStateFlow(0)
     val statsReconnects = _statsReconnects.asStateFlow()
 
+    private val _micSourceIndex = MutableStateFlow(0) // 0: VoIP, 1: Recognition, 2: Raw Mic
+    val micSourceIndex = _micSourceIndex.asStateFlow()
+
     init {
         startPipeline()
     }
@@ -68,9 +72,6 @@ class AudioViewModel(
 
             override fun onError(code: String, message: String) {
                 Log.e("AudioViewModel", "[control] error: $code $message")
-                if (code == "bad_token") {
-                    // TODO: Handle session expired
-                }
             }
 
             override fun onClose() {
@@ -80,18 +81,34 @@ class AudioViewModel(
             }
         }
 
-        // Start audio capture
+        val senderStarted = audioSender.start()
+        Log.d("AudioViewModel", "[pipeline] audioSender started: $senderStarted to port $audioPort")
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val captureStarted = audioCapture.start { frame ->
+                audioSender.sendFrame(frame)
+            }
+            Log.d("AudioViewModel", "[pipeline] audioCapture started: $captureStarted")
+        }
+
+        val controlConnected = controlClient.connect(callbacks)
+        Log.d("AudioViewModel", "[pipeline] controlClient connected: $controlConnected to port $ctrlPort")
+    }
+
+    fun setMicSource(index: Int) {
+        _micSourceIndex.value = index
+        val source = when (index) {
+            0 -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            1 -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+            else -> MediaRecorder.AudioSource.MIC
+        }
+        audioCapture.stop()
+        audioCapture.setAudioSource(source)
         viewModelScope.launch(Dispatchers.IO) {
             audioCapture.start { frame ->
                 audioSender.sendFrame(frame)
             }
         }
-
-        // Start UDP sender
-        audioSender.start()
-
-        // Connect control WebSocket
-        controlClient.connect(callbacks)
     }
 
     fun toggleMute() {
@@ -130,7 +147,7 @@ class AudioViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val audioCapture = get<AudioCapture>()
             val audioSender = get<AudioSender> { parametersOf(ip, audioPort) }
-            val controlClient = get<ControlClient> { parametersOf(ip, ctrlPort) }
+            val controlClient = get<ControlClient> { parametersOf(ip, ctrlPort, sessionId) }
             return AudioViewModel(ip, audioPort, ctrlPort, sessionId, pcName, audioCapture, audioSender, controlClient) as T
         }
     }

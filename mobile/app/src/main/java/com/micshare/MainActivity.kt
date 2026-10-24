@@ -8,12 +8,26 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -21,11 +35,12 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.micshare.designsystem.MicshareColors
 import com.micshare.designsystem.MicshareTheme
+import com.micshare.discovery.PCInfo
 import com.micshare.ui.audio.AudioScreen
 import com.micshare.ui.audio.AudioViewModel
 import com.micshare.ui.discovery.DiscoveryScreen
 import com.micshare.ui.discovery.DiscoveryViewModel
-import com.micshare.ui.discovery.PairingModal
+import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 
@@ -73,7 +88,9 @@ class MainActivity : ComponentActivity() {
 fun MicshareApp() {
     val navController = rememberNavController()
     val discoveryViewModel: DiscoveryViewModel = koinViewModel()
-    var pairingPc by remember { mutableStateOf<com.micshare.discovery.PCInfo?>(null) }
+    val scope = rememberCoroutineScope()
+    var connectingPc by remember { mutableStateOf<PCInfo?>(null) }
+    var connectionError by remember { mutableStateOf<String?>(null) }
 
     MicshareTheme.Theme {
         Surface(
@@ -84,19 +101,20 @@ fun MicshareApp() {
                     DiscoveryScreen(
                         viewModel = discoveryViewModel,
                         onPair = { pc ->
-                            pairingPc = pc
+                            connectingPc = pc
+                            connectionError = null
+                            scope.launch {
+                                val pairingClient = com.micshare.control.PairingClient(pc.ip, pc.ctrlPort)
+                                val result = pairingClient.connect("")
+                                connectingPc = null
+                                if (result.success && result.sessionId != null) {
+                                    navController.navigate("audio/${pc.ip}/${pc.audioPort}/${pc.ctrlPort}/${result.sessionId}/${pc.name}")
+                                } else {
+                                    connectionError = result.error ?: "Falha ao conectar com ${pc.name} (${pc.ip}). Verifique se o servidor no PC está rodando."
+                                }
+                            }
                         },
                     )
-                    pairingPc?.let { pc ->
-                        PairingModal(
-                            pc = pc,
-                            onDismiss = { pairingPc = null },
-                            onSuccess = { sessionId ->
-                                pairingPc = null
-                                navController.navigate("audio/${pc.ip}/${pc.audioPort}/${pc.ctrlPort}/${sessionId}/${pc.name}")
-                            },
-                        )
-                    }
                 }
 
                 composable(
@@ -128,6 +146,38 @@ fun MicshareApp() {
                         },
                     )
                 }
+            }
+
+            // Connecting dialog overlay
+            connectingPc?.let { pc ->
+                AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text("Conectando") },
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                            Text("Conectando a ${pc.name}\n(${pc.ip}:${pc.ctrlPort})...")
+                        }
+                    },
+                    confirmButton = {},
+                )
+            }
+
+            // Error dialog overlay
+            connectionError?.let { err ->
+                AlertDialog(
+                    onDismissRequest = { connectionError = null },
+                    title = { Text("Erro de Conexão") },
+                    text = { Text(err) },
+                    confirmButton = {
+                        Button(onClick = { connectionError = null }) {
+                            Text("OK")
+                        }
+                    },
+                )
             }
         }
     }

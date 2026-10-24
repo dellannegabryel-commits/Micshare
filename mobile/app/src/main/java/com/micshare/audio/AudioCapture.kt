@@ -4,18 +4,29 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AudioCapture(
     private val sampleRate: Int = 48000,
-    private val frameMs: Int = 10
+    private val frameMs: Int = 10,
+    private var audioSource: Int = MediaRecorder.AudioSource.VOICE_COMMUNICATION
 ) {
     private val frameSize = (sampleRate * frameMs) / 1000  // 480 samples
-    private val frameBytes = frameSize * 2  // 960 bytes (16-bit)
     private var audioRecord: AudioRecord? = null
     private var captureJob: Job? = null
     private val isRunning = AtomicBoolean(false)
+
+    private var aec: AcousticEchoCanceler? = null
+    private var agc: AutomaticGainControl? = null
+    private var ns: NoiseSuppressor? = null
+
+    fun setAudioSource(source: Int) {
+        audioSource = source
+    }
 
     @SuppressLint("MissingPermission")
     suspend fun start(onFrame: (ShortArray) -> Unit): Boolean {
@@ -35,7 +46,7 @@ class AudioCapture(
             val bufferSize = minBufferSize * 4
 
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                audioSource,
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -51,7 +62,29 @@ class AudioCapture(
                 return false
             }
 
+            // Apply Hardware Audio Effects (AEC, AGC, Noise Suppression)
+            val sessionId = audioRecord?.audioSessionId ?: 0
+            if (sessionId != 0) {
+                try {
+                    if (AcousticEchoCanceler.isAvailable()) {
+                        aec = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
+                        println("[capture] AcousticEchoCanceler enabled")
+                    }
+                    if (AutomaticGainControl.isAvailable()) {
+                        agc = AutomaticGainControl.create(sessionId)?.apply { enabled = true }
+                        println("[capture] AutomaticGainControl enabled")
+                    }
+                    if (NoiseSuppressor.isAvailable()) {
+                        ns = NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+                        println("[capture] NoiseSuppressor enabled")
+                    }
+                } catch (e: Exception) {
+                    println("[capture] audio effects error: ${e.message}")
+                }
+            }
+
             audioRecord?.startRecording()
+            println("[capture] AudioRecord started with source $audioSource")
         } catch (e: Exception) {
             println("[capture] AudioRecord init exception: ${e.message}")
             audioRecord?.release()
@@ -67,10 +100,9 @@ class AudioCapture(
                     val rec = audioRecord ?: break
                     val read = rec.read(buffer, 0, frameSize, AudioRecord.READ_BLOCKING)
                     if (read == frameSize && isRunning.get()) {
-                        onFrame(buffer.copyOf())
+                        onFrame(buffer)
                     } else if (read < 0) {
                         println("[capture] read error: $read")
-                        delay(10)
                     }
                 } catch (e: Exception) {
                     if (isRunning.get()) {
@@ -86,6 +118,22 @@ class AudioCapture(
     fun stop() {
         if (!isRunning.getAndSet(false)) return
         captureJob?.cancel()
+
+        try {
+            aec?.release()
+        } catch (_: Exception) {}
+        aec = null
+
+        try {
+            agc?.release()
+        } catch (_: Exception) {}
+        agc = null
+
+        try {
+            ns?.release()
+        } catch (_: Exception) {}
+        ns = null
+
         try {
             audioRecord?.stop()
         } catch (e: Exception) {
