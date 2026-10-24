@@ -12,15 +12,15 @@ Sistema composto por um aplicativo mobile (Client) e um aplicativo desktop (Serv
 ## 3. Arquitetura de Comunicação (Camadas)
 O fluxo de dados é dividido para otimizar performance e confiabilidade:
 
-*   **Streaming de Áudio (UDP / WebRTC):** Protocolos sem garantia de entrega (UDP puro com PCM raw/Opus) ou WebRTC para priorizar a velocidade. TCP não deve ser usado para o fluxo contínuo de áudio para evitar *buffering* excessivo em caso de perda de pacotes.
-*   **Sinalização e Controle (TCP / WebSockets):** Usado para enviar comandos críticos que precisam de garantia de entrega, como "Mute", "Volume Up", "Volume Down" e "Disconnect".
-*   **Descoberta (mDNS / UDP Broadcast):** O PC anuncia sua presença na rede (ex: Bonjour/Zeroconf). O app escuta a rede, captura o IP do PC automaticamente e inicia o handshake.
+*   **Streaming de Áudio (UDP):** PCM 16-bit little-endian, mono, 48 kHz, blocos de 10 ms (960 B). Header binário de 16 B com `seq`, `captureTs`, `flags`. UDP puro — sem retransmissão, sem agrupamento. Perda mascarada por PLC zero-order no jitter buffer.
+*   **Sinalização e Controle (WebSocket/TCP):** JSON sobre WebSocket. Mensagens: `hello`/`welcome` (handshake), `mute`, `volume`, `bye`, `stats` (1 Hz). WebSocket garante entrega ordenada para controles.
+*   **Descoberta (UDP Broadcast):** PC anuncia beacon 1 Hz em `255.255.255.255:41234` e broadcast de sub-rede. App escuta, monta lista, usuário toca para conectar. Fallback: IP manual. mDNS fica como camada opcional (Fase 2.5) — beacon UDP é primário pois evita dependência nativa no mobile.
 
 ## 4. Stack Tecnológica Recomendada
-*   **Client (Mobile):** React Native (TypeScript) ou Kotlin/Swift Nativo. 
-    *   *Justificativa:* Facilidade em construir interfaces e acesso a bibliotecas UDP/WebRTC.
-*   **Server/Receiver (PC):** Node.js (via aplicação de terminal ou encapsulado em Electron/Tauri para interface gráfica).
-    *   *Justificativa:* Excelente ecossistema para WebSockets, mDNS e processamento de streams.
+*   **Client (Mobile):** Kotlin nativo com Jetpack Compose (Android).
+    *   *Justificativa:* `AudioRecord`/`AudioTrack` são APIs estáveis do Android; `DatagramSocket` + `NetworkCallback` para UDP nativo sem dependências extras; APK ~5 MB; `ForegroundService` tipo `microphone` para captura em background (futuro). iOS (Swift) fica para depois do MVP Android validado.
+*   **Server/Receiver (PC):** Node.js (via aplicação de terminal ou encapsulado em Tauri para interface gráfica).
+    *   *Justificativa:* Excelente ecossistema para WebSockets, UDP broadcast, processamento de streams; iteração rápida em TypeScript; CPU de PCM/Opus é irrelevante.
 *   **Roteamento Virtual (Obrigatório):**
     *   *Windows:* VB-Cable (Virtual Audio Cable).
     *   *Linux:* PipeWire (Virtual Loopback).
@@ -29,19 +29,24 @@ O fluxo de dados é dividido para otimizar performance e confiabilidade:
 ## 5. Plano de Implementação (Fases)
 
 ### Fase 1: Prova de Conceito (Áudio Básico)
-1. Criar um servidor UDP em Node.js (`dgram`) no PC.
-2. Criar um app mobile básico que captura amostras do microfone (PCM 16-bit) e envia pacotes UDP para o IP do PC.
-3. Receber os buffers no PC e reproduzi-los usando `node-speaker` para validar a latência.
+1. Criar protocolo binário compartilhado (header 16 B, encode/decode, validação).
+2. Criar servidor UDP em Node.js (`dgram`) no PC com jitter buffer adaptativo (2–8 frames).
+3. Testar com `fakeClient.js` (Node) enviando frames sintéticos → valida jitter buffer + sink.
+4. Saída de áudio no PC via `naudiodon2` (PortAudio) ou ffplay fallback.
 
-### Fase 2: Auto-Descoberta (Zero Configuração)
-1. Implementar `bonjour-service` (mDNS) no Node.js para anunciar um serviço (ex: `_p2pmic._udp`).
-2. No app mobile, usar biblioteca mDNS para localizar o serviço, resgatar o IP/Porta e conectar.
+### Fase 2: Auto-Descoberta (Zero Configuração) + Cliente Kotlin
+1. Implementar beacon UDP broadcast no PC (1 Hz, JSON com nome, portas).
+2. Criar app Android nativo (Kotlin + Compose): `AudioRecord` → 10 ms frames → `DatagramSocket` UDP 41235.
+3. `BeaconListener` no app (UDP 41234) → lista PCs → tap → WebSocket `hello` → `welcome` com `sessionId`.
+4. Fallback IP manual para redes com isolamento de cliente (AP isolation).
 
 ### Fase 3: Controles de Mute e Volume
-1. Subir um servidor WebSocket paralelo ao servidor UDP no PC.
-2. **Mute:** O app para a transmissão UDP e envia o estado via WebSocket.
-3. **Volume:** O app envia um multiplicador (ex: `1.2`) via WebSocket; o Node.js multiplica as amostras PCM antes da reprodução.
+1. Mute duplo: app para envio UDP + servidor descarta frames (`flags.MUTED` no header).
+2. Volume: multiplicador `[0, 4]` clampado no servidor antes do sink.
+3. Stats 1 Hz via WebSocket (`lossPct`, `bufferMs`, `seqGaps`, `reconnects`) exibidos na UI.
 
 ### Fase 4: Integração com Driver Virtual
-1. Configurar o output da aplicação Node.js para direcionar o áudio exclusivamente para o "Virtual Audio Cable" (Dispositivo de Saída Virtual).
-2. Definir o "Virtual Audio Cable" (Dispositivo de Entrada) como o microfone padrão do sistema operacional.
+1. Seleção de dispositivo de saída no PC (`--device "CABLE"`).
+2. `naudiodon2` lista dispositivos, match parcial case-insensitive ("cable", "vb-audio", "virtual").
+3. Discord/OBS reconhecem `CABLE Output (VB-Audio Virtual Cable)` como microfone.
+4. `npm run install-vbcable` (PowerShell, precisa Admin + reinício) para instalar VB-CABLE.

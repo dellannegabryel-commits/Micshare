@@ -11,7 +11,7 @@
 |---|---|---|
 | S1.1 Scaffold monorepo | ✅ | npm workspaces, TS strict, 3 pacotes |
 | S1.2 Protocolo binário + testes | ✅ | 23 testes, header 16 B, validação estrita |
-| S1.3 Spike captura PCM mobile | ⚠️ Parcial | Fake client funcional (500 frames, 5% drop simulado). **RN real pendente** — requer device físico |
+| S1.3 Spike captura PCM mobile | ⚠️ Removido | Spike React Native movido para Fase 2 (cliente Kotlin nativo). Fake client funcional (500 frames, 5% drop simulado) valida pipeline PC. |
 | S1.4 Servidor UDP + jitter buffer | ✅ | Buffer adaptativo (2–8 frames), PLC zero-order, fast-forward, flush |
 | S1.5 Saída de áudio PC | ✅ | ffplay fallback (PCM s16le 48k mono). `naudiodon2` compila mas pull-model não integra fácil |
 | S1.6 CLI com flags/stats | ✅ | `--port`, `--device`, `--verbose`, `--list-devices`, SIGINT/SIGTERM limpo |
@@ -75,7 +75,7 @@ TOTAL estimado Método B: 55–95 ms
 
 **Próximos passos (Fase 2):**
 1. Beacon UDP broadcast (descoberta)
-2. Pareamento por código de 6 dígitos
+2. Hello/Welcome sem código de pareamento (MVP sem pareamento)
 3. Lista de PCs no app mobile
 4. Fallback IP manual
 

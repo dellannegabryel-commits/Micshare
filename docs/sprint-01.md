@@ -6,16 +6,15 @@ Duração: 2 semanas · Board: `micshare` (`hermes kanban list` ou a aba Kanban 
 
 ## Escopo
 
-Entra: captura PCM no celular, header binário + validação, servidor UDP com jitter buffer, saída de áudio no PC com seleção de dispositivo, CLI com stats, medição de latência, relatório de gate.
+Entra: header binário + validação, servidor UDP com jitter buffer, saída de áudio no PC com seleção de dispositivo, CLI com stats, medição de latência, relatório de gate. Testes com `fakeClient.js` simulando captura PCM.
 
-Não entra: descoberta automática, WebSocket de controle, mute/volume, cabo virtual como requisito de aceite, UI, Opus, iOS+Android simultâneos.
+Não entra: descoberta automática, WebSocket de controle, mute/volume, cabo virtual como requisito de aceite, UI, Opus, cliente mobile (Fase 2).
 
 ## Tarefas
 
 | ID | Tarefa | Depende de | Estimativa |
 |---|---|---|---|
-| `t_fc537cb0` | S1.1 Scaffold do monorepo (protocol + pc + mobile) | — | 0,5 d |
-| `t_ae8bc86f` | S1.3 Spike: captura PCM no celular e envio UDP | S1.1 | 2 d |
+| `t_fc537cb0` | S1.1 Scaffold do monorepo (protocol + pc) | — | 0,5 d |
 | `t_c8175ad8` | S1.2 Protocolo: header binário, validação e testes | S1.1 | 1 d |
 | `t_5a7a55da` | S1.4 Servidor UDP + jitter buffer adaptativo | S1.2 | 2,5 d |
 | `t_78bb19cd` | S1.5 Saída de áudio no PC (naudiodon2 + dispositivo) | S1.2 | 1 d |
@@ -23,17 +22,16 @@ Não entra: descoberta automática, WebSocket de controle, mute/volume, cabo vir
 | `t_b594a297` | S1.7 Metodologia de medição de latência | S1.4, S1.5 | 0,5 d |
 | `t_0e3cd5e7` | S1.8 E2E da Fase 1 e decisão go/no-go | todas | 1 d |
 
-No board, S1.8 fica em `todo` até as outras sete fecharem (dependência registrada). F2–F5 também estão em `todo`, presas a S1.8 — é o roadmap visível, não trabalho desta sprint.
+No board, S1.8 fica em `todo` até as outras fecharem (dependência registrada). F2–F5 também estão em `todo`, presas a S1.8 — é o roadmap visível, não trabalho desta sprint.
 
 ## Ordem de execução
 
 ```
 S1.1 ─┬─ S1.2 ─┬─ S1.4 ─┬─ S1.6 ─┐
       │        └─ S1.5 ─┴─ S1.7 ─┼─ S1.8 (gate)
-      └─ S1.3 ───────────────────┘
 ```
 
-Caminho crítico: **S1.1 → S1.2 → S1.4 → S1.8**. S1.3 (mobile) corre em paralelo com S1.2/S1.4 e é o maior risco técnico da sprint (addon nativo de captura) — começar no dia 1, não no dia 5. S1.5 pode começar assim que S1.2 estiver pronto, usando frames sintéticos (senão a saída fica esperando o celular).
+Caminho crítico: **S1.1 → S1.2 → S1.4 → S1.8**. S1.5 pode começar assim que S1.2 estiver pronto, usando frames sintéticos do `fakeClient.js` (senão a saída fica esperando o celular).
 
 ## Definição de pronto da sprint
 

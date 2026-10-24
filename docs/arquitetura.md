@@ -89,7 +89,7 @@ Mensagens JSON, uma por frame de texto. `t` é o discriminador.
 
 Cliente → servidor:
 ```json
-{"t":"hello","v":1,"token":"482913","sampleRate":48000,"channels":1,"codec":"pcm16","frameMs":10}
+{"t":"hello","v":1,"token":"","sampleRate":48000,"channels":1,"codec":"pcm16","frameMs":10}
 {"t":"mute","value":true}
 {"t":"volume","value":1.2}
 {"t":"bye"}
@@ -98,11 +98,11 @@ Servidor → cliente:
 ```json
 {"t":"welcome","sessionId":"c1f0","audioPort":41235,"targetBufferMs":30}
 {"t":"stats","lossPct":0.4,"bufferMs":32,"seqGaps":12,"reconnects":0}
-{"t":"error","code":"bad_token","message":"código de pareamento inválido"}
+{"t":"error","code":"bad_message","message":"mensagem inválida"}
 ```
 
 Regras:
-- `hello` sem `token` válido → `error` + close; o áudio UDP daquele IP é ignorado (o servidor só aceita datagrams do endereço da sessão autenticada).
+- `hello` é aceito sem validação de token (sem pareamento no MVP); servidor responde com `welcome` contendo `sessionId`. O áudio UDP daquele IP é aceito.
 - `volume` é clampado em `[0, 4]` no servidor; aplicado como multiplicador inteiro com clamp em `int16` (`Math.max(-32768, Math.min(32767, s * v))`), antes do sink. Mute é estado no cliente (para de enviar) **e** no servidor (descarta) — dupla garantia, porque se só o cliente parasse e o app travasse, ficaria áudio fantasma.
 - `stats` a 1 Hz, usado pelo app para mostrar perda/buffer (diagnóstico visível para o usuário, não telemetria).
 - Queda do WS: cliente reconecta com backoff 250 ms → 5 s; áudio UDP continua fluindo nesse intervalo (mute/volume ficam no último estado conhecido), o que mantém a experiência estável.
@@ -114,10 +114,10 @@ Regras:
 Beacon: 1 datagrama por segundo em `255.255.255.255:41234` (e no broadcast da sub-rede, para redes com broadcast filtrado), JSON ≤ 200 B:
 
 ```json
-{"app":"micshare","v":1,"name":"DESKTOP-GABRY","audioPort":41235,"ctrlPort":41236,"pair":true,"code":"482913"}
+{"app":"micshare","v":1,"name":"DESKTOP-GABRY","audioPort":41235,"ctrlPort":41236,"pair":false,"code":""}
 ```
 
-App: escuta 41234, monta lista de PCs (dedupe por `name` + IP, TTL 3 s), usuário toca no PC desejado, app abre WS, manda `hello` com o código. Código de 6 dígitos rotaciona a cada boot do servidor e é exibido na janela/terminal do PC.
+App: escuta 41234, monta lista de PCs (dedupe por `name` + IP, TTL 3 s), usuário toca no PC desejado, app abre WS e manda `hello` (sem token). Servidor responde com `welcome` contendo `sessionId`. O código de pareamento foi removido no MVP.
 
 Fallback quando o beacon não passa (AP com isolamento de cliente, rede corporativa, VLAN): digitar IP:porta manualmente, ou QR code gerado no PC (Fase 2.5). Isolamento de cliente é o caso em que **nenhuma** descoberta funciona — a documentação precisa dizer isso explicitamente, porque o usuário vai culpar o app.
 
@@ -161,16 +161,40 @@ Micshare/
 │   ├── arquitetura.md        # este documento
 │   ├── roadmap.md            # fases e gates
 │   └── sprint-01.md          # plano da sprint corrente
-├── packages/
-│   ├── protocol/             # header binário, encode/decode, validação, testes
-│   │   └── src/{audioFrame.ts,ctrl.ts}
-│   └── pc/                   # servidor: beacon, ws, udp, jitter, sink
-│       └── src/{index.ts,discovery.ts,control.ts,audioServer.ts,jitterBuffer.ts,sink.ts}
-└── mobile/                   # app React Native (0.7x, TS)
-    └── src/{App.tsx,discovery.ts,capture.ts,transport.ts,control.ts}
+└── packages/
+    ├── protocol/             # header binário, encode/decode, validação, testes
+    │   └── src/{audioFrame.ts,ctrl.ts}
+    └── pc/                   # servidor: beacon, ws, udp, jitter, sink
+        └── src/{index.ts,discovery.ts,control.ts,audioServer.ts,jitterBuffer.ts,sink.ts}
 ```
 
 `packages/pc` roda como CLI no MVP (`npm --prefix packages/pc run dev`), e só depois ganha UI (Tauri ou painel web local). Não começamos por UI: a UI de um app de áudio é uma tela com 3 controles, o risco está no áudio.
+
+### Cliente Mobile (Fase 2+)
+
+O cliente mobile será nativo **Kotlin (Android)** com Jetpack Compose, não React Native. Motivos:
+
+| Motivo | Detalhe |
+|---|---|
+| **Áudio confiável** | `AudioRecord` / `AudioTrack` são APIs estáveis do Android; `react-native-live-audio-stream` exige Expo dev client + config plugin e tem bugs de JSI/threading. |
+| **UDP nativo** | `DatagramSocket` / `NetworkCallback` funcionam sem dependências nativas extras; `react-native-udp` está abandonado. |
+| **Tamanho do app** | APK ~5 MB vs ~30 MB RN + Hermes; instalação instantânea. |
+| **Permissões** | `RECORD_AUDIO`, `ACCESS_WIFI_STATE` diretos no `AndroidManifest.xml`. |
+| **Background** | `ForegroundService` tipo `microphone` permite captura com tela desligada (futuro). |
+
+Arquitetura Android (planejada):
+```
+mobile-android/
+├── app/src/main/java/com/micshare/
+│   ├── audio/          # AudioRecord capture → 10 ms PCM frames
+│   ├── transport/      # DatagramSocket UDP sender + NetworkCallback
+│   ├── control/        # OkHttp WebSocket (hello/mute/volume/bye/stats)
+│   ├── discovery/      # BeaconListener (UDP 41234) + manual IP fallback
+│   ├── ui/             # Compose: DiscoveryScreen → AudioScreen
+│   └── di/             # Hilt/Koin modules
+```
+
+A integração com o protocolo compartilhado (`@micshare/protocol`) será via **Kotlin Multiplatform** ou geração de código a partir do schema TypeScript (Fase 2). No MVP, o cliente Kotlin reimplementa encode/decode do header (16 B) localmente — são ~50 linhas.
 
 ## 10. Segurança e limites de confiança
 
