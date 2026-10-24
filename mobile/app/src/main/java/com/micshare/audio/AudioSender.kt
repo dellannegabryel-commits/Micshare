@@ -21,6 +21,7 @@ class AudioSender(
     private val captureTsBase = AtomicLong(System.currentTimeMillis())
     private val muted = AtomicBoolean(false)
     private var address: InetAddress? = null
+    private var currentCodec = ProtocolConstants.CODEC_PCM_S16LE
 
     fun start(): Boolean {
         if (isRunning.getAndSet(true)) return false
@@ -36,18 +37,15 @@ class AudioSender(
         }
     }
 
-    fun sendFrame(pcm: ShortArray) {
+    fun setCodec(codec: Int) {
+        currentCodec = codec
+        println("[AudioSender] Codec set to: ${if (codec == ProtocolConstants.CODEC_OPUS) "Opus" else "PCM"}")
+    }
+
+    fun sendFrame(payload: ByteArray) {
         val targetAddr = address ?: return
         val currentSocket = socket ?: return
         if (!isRunning.get() || muted.get()) return
-
-        val payload = ByteArray(pcm.size * 2)
-        for (i in pcm.indices) {
-            val sample = pcm[i].toInt()
-            // S16LE: Little Endian (LSB first, MSB second)
-            payload[i * 2] = (sample and 0xFF).toByte()
-            payload[i * 2 + 1] = ((sample shr 8) and 0xFF).toByte()
-        }
 
         val currentSeq = seq.getAndIncrement()
         val captureTs = (System.currentTimeMillis() - captureTsBase.get()).toInt()
@@ -59,7 +57,7 @@ class AudioSender(
             flags = flags,
             payloadLen = payload.size,
             channels = 1,
-            codec = ProtocolConstants.CODEC_PCM_S16LE
+            codec = currentCodec
         )
         val frame = AudioFrameData(header, payload)
         val encoded = AudioFrame.encode(frame)
@@ -68,7 +66,7 @@ class AudioSender(
             val packet = DatagramPacket(encoded, encoded.size, targetAddr, targetPort)
             currentSocket.send(packet)
             if (currentSeq % 100 == 0) {
-                println("[AudioSender] Sent audio frame #$currentSeq (${encoded.size} bytes) to $targetIp:$targetPort")
+                println("[AudioSender] Sent audio frame #$currentSeq (${encoded.size} bytes) to $targetIp:$targetPort codec=${if (currentCodec == ProtocolConstants.CODEC_OPUS) "Opus" else "PCM"}")
             }
         } catch (e: Exception) {
             if (isRunning.get()) {

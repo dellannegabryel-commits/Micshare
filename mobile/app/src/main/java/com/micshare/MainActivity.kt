@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,6 +44,7 @@ import com.micshare.ui.discovery.DiscoveryViewModel
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
+import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
     private val requestPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
@@ -86,17 +88,19 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MicshareApp() {
+    val context = LocalContext.current
     val navController = rememberNavController()
     val discoveryViewModel: DiscoveryViewModel = koinViewModel()
     val scope = rememberCoroutineScope()
     var connectingPc by remember { mutableStateOf<PCInfo?>(null) }
     var connectionError by remember { mutableStateOf<String?>(null) }
 
-    MicshareTheme.Theme {
+    MicshareTheme.Theme(context) {
         Surface(
             color = MicshareColors.BackgroundPrimary,
+            modifier = Modifier.fillMaxSize(),
         ) {
-            NavHost(navController, startDestination = "discovery") {
+            NavHost(navController, startDestination = "discovery", modifier = Modifier.fillMaxSize()) {
                 composable("discovery") {
                     DiscoveryScreen(
                         viewModel = discoveryViewModel,

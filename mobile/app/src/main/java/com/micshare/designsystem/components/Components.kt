@@ -19,9 +19,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.micshare.designsystem.MicshareColors
 
+// Re-export all new components from MicshareComponents
+import com.micshare.designsystem.components.GlassPanel
+import com.micshare.designsystem.components.GlassStatusCard
+import com.micshare.designsystem.components.HeroMuteButton
+import com.micshare.designsystem.components.PillSlider
+import com.micshare.designsystem.components.StatPill
+import com.micshare.designsystem.components.StatPillVariant
+import com.micshare.designsystem.components.StatusState
+import com.micshare.designsystem.components.AnimatedStatusText
+
+// Legacy icon aliases for backward compatibility
 val AccentPrimary: Color = MicshareColors.BrandPrimary
 
-// Icon aliases referenced across screens
 val Logout: ImageVector = Icons.Default.ExitToApp
 val Memory: ImageVector = Icons.Default.Info
 val Mic: ImageVector = Icons.Default.PlayArrow
@@ -32,14 +42,19 @@ val Trend: ImageVector = Icons.Default.Star
 val Computer: ImageVector = Icons.Default.Share
 val Refresh: ImageVector = Icons.Default.Refresh
 
+// Legacy enums for backward compatibility
 enum class CardVariant { Primary, Secondary, Outlined, Elevated }
 enum class ButtonVariant { Primary, Secondary, Danger, Outlined }
 enum class ButtonSize { Small, Medium, Large }
 enum class StatCardVariant { Default, Success, Warning, Danger }
-enum class StatusState { Connected, Reconnecting, Disconnected }
-enum class StatusSize { Small, Medium, Large }
 
+// Deprecated legacy components - use new GlassPanel, HeroMuteButton, PillSlider, StatPill instead
+
+/**
+ * @Deprecated Use GlassPanel instead
+ */
 @Composable
+@Deprecated("Use GlassPanel", ReplaceWith("GlassPanel(modifier, content)"))
 fun MicshareCard(
     modifier: Modifier = Modifier,
     variant: CardVariant = CardVariant.Primary,
@@ -74,7 +89,11 @@ fun MicshareCard(
     }
 }
 
+/**
+ * @Deprecated Use HeroMuteButton or standard Button with MicshareTheme.Shapes.Pill
+ */
 @Composable
+@Deprecated("Use HeroMuteButton for mute button or Button with Pill shape", ReplaceWith(""))
 fun MicshareButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -119,7 +138,11 @@ fun MicshareButton(
     )
 }
 
+/**
+ * @Deprecated Use standard TextField with MicshareTheme
+ */
 @Composable
+@Deprecated("Use standard Material3 TextField", ReplaceWith(""))
 fun MicshareTextField(
     value: String,
     onValueChange: (String) -> Unit,
@@ -157,7 +180,11 @@ fun MicshareTextField(
     )
 }
 
+/**
+ * @Deprecated Use GlassStatusCard or StatPill instead
+ */
 @Composable
+@Deprecated("Use GlassStatusCard or StatPill", ReplaceWith(""))
 fun MicshareStatusIndicator(
     state: StatusState,
     text: String,
@@ -188,7 +215,11 @@ fun MicshareStatusIndicator(
     }
 }
 
+/**
+ * @Deprecated Use PillSlider instead
+ */
 @Composable
+@Deprecated("Use PillSlider", ReplaceWith(""))
 fun MicshareSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
@@ -210,7 +241,11 @@ fun MicshareSlider(
     )
 }
 
+/**
+ * @Deprecated Use StatPill instead
+ */
 @Composable
+@Deprecated("Use StatPill", ReplaceWith(""))
 fun MicshareStatCard(
     title: String,
     value: String,
@@ -242,3 +277,5 @@ fun MicshareStatCard(
         }
     }
 }
+
+enum class StatusSize { Small, Medium, Large }

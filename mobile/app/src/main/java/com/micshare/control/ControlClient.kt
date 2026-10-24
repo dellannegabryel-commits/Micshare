@@ -61,8 +61,9 @@ class ControlClient(
                             token = sid,
                             sampleRate = 48000,
                             channels = 1,
-                            codec = "pcm16",
-                            frameMs = 10
+                            codec = "opus",
+                            frameMs = 10,
+                            supportedCodecs = listOf("pcm", "opus")
                         )
                         webSocket.send(CtrlMessage.encode(hello))
                     }

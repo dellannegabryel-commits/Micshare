@@ -9,9 +9,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.micshare.audio.AudioCapture
+import com.micshare.audio.AudioCodec
 import com.micshare.audio.AudioSender
 import com.micshare.control.ControlClient
 import com.micshare.control.ControlCallbacks
+import com.micshare.protocol.ProtocolConstants
 import com.micshare.service.AudioCaptureService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,12 +67,58 @@ class AudioViewModel(
     private val _keepScreenOn = MutableStateFlow(true)
     val keepScreenOn = _keepScreenOn.asStateFlow()
 
+    private val _noiseSuppression = MutableStateFlow(false)
+    val noiseSuppression = _noiseSuppression.asStateFlow()
+
+    private val _autoGain = MutableStateFlow(false)
+    val autoGain = _autoGain.asStateFlow()
+
+    private val _echoCancellation = MutableStateFlow(false)
+    val echoCancellation = _echoCancellation.asStateFlow()
+
+    private val _codec: MutableStateFlow<AudioCodec> = MutableStateFlow(AudioCodec.Pcm)
+    val codec = _codec
+
     init {
         startPipeline()
     }
 
     fun setKeepScreenOn(enabled: Boolean) {
         _keepScreenOn.value = enabled
+    }
+
+    fun setNoiseSuppression(enabled: Boolean) {
+        _noiseSuppression.value = enabled
+        audioCapture.nsEnabled = enabled
+        restartCapture()
+    }
+
+    fun setAutoGain(enabled: Boolean) {
+        _autoGain.value = enabled
+        audioCapture.agcEnabled = enabled
+        restartCapture()
+    }
+
+    fun setEchoCancellation(enabled: Boolean) {
+        _echoCancellation.value = enabled
+        audioCapture.aecEnabled = enabled
+        restartCapture()
+    }
+
+    fun setCodec(codec: AudioCodec) {
+        _codec.value = codec
+        restartCapture()
+    }
+
+    private fun restartCapture() {
+        audioCapture.stop()
+        audioSender.setCodec(if (_codec.value is AudioCodec.Opus) ProtocolConstants.CODEC_OPUS else ProtocolConstants.CODEC_PCM_S16LE)
+        viewModelScope.launch(Dispatchers.IO) {
+            val captureStarted = audioCapture.start(_codec.value) { payload ->
+                audioSender.sendFrame(payload)
+            }
+            Log.d("AudioViewModel", "[pipeline] audioCapture started: $captureStarted codec=${_codec.value}")
+        }
     }
 
     private fun startPipeline() {
@@ -107,9 +155,13 @@ class AudioViewModel(
         val senderStarted = audioSender.start()
         Log.d("AudioViewModel", "[pipeline] audioSender started: $senderStarted to port $audioPort")
 
+        audioCapture.nsEnabled = _noiseSuppression.value
+        audioCapture.agcEnabled = _autoGain.value
+        audioCapture.aecEnabled = _echoCancellation.value
+
         viewModelScope.launch(Dispatchers.IO) {
-            val captureStarted = audioCapture.start { frame ->
-                audioSender.sendFrame(frame)
+            val captureStarted = audioCapture.start(_codec.value) { payload ->
+                audioSender.sendFrame(payload)
             }
             Log.d("AudioViewModel", "[pipeline] audioCapture started: $captureStarted")
         }
@@ -121,16 +173,17 @@ class AudioViewModel(
     fun setMicSource(index: Int) {
         _micSourceIndex.value = index
         val source = when (index) {
-            0 -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            0 -> MediaRecorder.AudioSource.MIC
             1 -> MediaRecorder.AudioSource.VOICE_RECOGNITION
-            else -> MediaRecorder.AudioSource.MIC
+            else -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
         }
         audioCapture.stop()
         audioCapture.setAudioSource(source)
         viewModelScope.launch(Dispatchers.IO) {
-            audioCapture.start { frame ->
-                audioSender.sendFrame(frame)
+            val captureStarted = audioCapture.start(_codec.value) { payload ->
+                audioSender.sendFrame(payload)
             }
+            Log.d("AudioViewModel", "[pipeline] audioCapture started: $captureStarted")
         }
     }
 

@@ -20,7 +20,8 @@ sealed class CtrlMessage {
         val sampleRate: Int,
         val channels: Int,
         val codec: String,
-        val frameMs: Int
+        val frameMs: Int,
+        val supportedCodecs: List<String> = listOf("pcm", "opus")
     ) : CtrlMessage()
 
     @Serializable
@@ -28,7 +29,8 @@ sealed class CtrlMessage {
     data class Welcome(
         val sessionId: String,
         val audioPort: Int,
-        val targetBufferMs: Int
+        val targetBufferMs: Int,
+        val codec: String = "pcm"
     ) : CtrlMessage()
 
     @Serializable
