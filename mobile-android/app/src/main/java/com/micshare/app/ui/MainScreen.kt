@@ -1,5 +1,6 @@
 package com.micshare.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,13 +11,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,17 +33,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.dp
-import com.micshare.app.R
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardActionScope
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.micshare.app.viewmodel.DiscoveredServer
+import com.micshare.app.ui.theme.MicshareBackground
 import com.micshare.app.ui.theme.MicshareGreen
 import com.micshare.app.ui.theme.MicshareSurface
+import com.micshare.app.ui.theme.MicshareSurfaceVariant
+import com.micshare.app.ui.theme.MicshareOnSurface
+import com.micshare.app.ui.theme.MicshareOnBackground
+import com.micshare.app.ui.theme.MicshareError
 import com.micshare.app.viewmodel.MainViewModel
 import com.micshare.app.viewmodel.ServerState
 
@@ -48,7 +66,7 @@ fun MainScreen(viewModel: MainViewModel) {
     val audioLevel by viewModel.audioLevel.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
 
-    androidx.compose.material3.LaunchedEffect(key1 = true) {
+    LaunchedEffect(key1 = true) {
         viewModel.startDiscovery()
     }
 
@@ -76,7 +94,7 @@ fun MainScreen(viewModel: MainViewModel) {
                     )
                     IconButton(onClick = { viewModel.startDiscovery() }) {
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.Refresh,
+                            imageVector = Icons.Default.Refresh,
                             contentDescription = "Refresh",
                             tint = MicshareGreen
                         )
@@ -86,7 +104,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 // Status Card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    elevation = androidx.compose.foundation.layout.CardDefaults.cardElevation(defaultElevation = 4.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -107,7 +125,7 @@ fun MainScreen(viewModel: MainViewModel) {
                             fontWeight = FontWeight.Medium
                         )
                         if (serverState == ServerState.Discovering) {
-                            androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 12.dp))
+                            Spacer(modifier = Modifier.padding(top = 12.dp))
                             CircularProgressIndicator(color = MicshareGreen)
                         }
                     }
@@ -205,7 +223,7 @@ fun ServerCard(
             }
             if (isSelected) {
                 Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.CheckCircle,
+                    imageVector = Icons.Default.CheckCircle,
                     contentDescription = "Selected",
                     tint = MicshareGreen
                 )
@@ -223,7 +241,7 @@ fun PairingCodeInput(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = androidx.compose.foundation.layout.CardDefaults.cardElevation(defaultElevation = 4.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -234,9 +252,11 @@ fun PairingCodeInput(
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 16.dp))
+            Spacer(modifier = Modifier.padding(top = 16.dp))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top
             ) {
                 pairingCode.forEachIndexed { index, char ->
                     Box(
@@ -244,7 +264,7 @@ fun PairingCodeInput(
                             .size(48.dp)
                             .background(
                                 color = if (index < pairingCode.length) MicshareGreen else MicshareSurfaceVariant,
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(8.dp)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -257,27 +277,24 @@ fun PairingCodeInput(
                     }
                 }
             }
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 16.dp))
-            androidx.compose.material3.TextField(
+            Spacer(modifier = Modifier.padding(top = 16.dp))
+            androidx.compose.material3.OutlinedTextField(
                 value = pairingCode,
                 onValueChange = onCodeChange,
                 modifier = Modifier.width(200.dp),
                 singleLine = true,
-                maxLines = 1,
-                keyboardOptions = androidx.compose.ui.text.input.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                    imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done
                 ),
-                keyboardActions = androidx.compose.ui.text.input.KeyboardActions(
-                    onDone = { onConfirm() }
-                ),
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                // keyboardActions removed to avoid IR lowering issue
+                visualTransformation = PasswordVisualTransformation(),
                 label = { Text("Código") },
                 trailingIcon = {
                     if (enabled) {
                         IconButton(onClick = onConfirm) {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Check,
+                                imageVector = Icons.Default.Check,
                                 contentDescription = "Confirmar"
                             )
                         }
@@ -303,7 +320,7 @@ fun StreamingControls(
         // Audio Level Visualizer
         Card(
             modifier = Modifier.width(200.dp),
-            elevation = androidx.compose.foundation.layout.CardDefaults.cardElevation(defaultElevation = 4.dp)
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -314,7 +331,7 @@ fun StreamingControls(
                     fontSize = 14.sp,
                     color = com.micshare.app.ui.theme.MicshareOnSurface.copy(alpha = 0.7f)
                 )
-                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 8.dp))
+                Spacer(modifier = Modifier.padding(top = 8.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.Bottom
@@ -326,7 +343,7 @@ fun StreamingControls(
                                 .height((audioLevel * 100 + (i * 5)).coerceIn(10f, 100f).dp)
                                 .background(
                                     color = if (i <= (audioLevel * 10).toInt()) MicshareGreen else MicshareSurfaceVariant,
-                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                                    shape = RoundedCornerShape(4.dp)
                                 )
                         )
                     }
@@ -345,7 +362,7 @@ fun StreamingControls(
                 modifier = Modifier.width(140.dp)
             ) {
                 Text(
-                    text = if (isStreaming) "PARAR" : "INICIAR",
+                    text = if (isStreaming) "PARAR" else "INICIAR",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -367,13 +384,3 @@ fun StreamingControls(
         }
     }
 }
-
-data class DiscoveredServer(
-    val name: String,
-    val ip: String,
-    val port: Int,
-    val pairingPort: Int
-)
-
-val com.micshare.app.ui.theme.MicshareOnSurface: androidx.compose.ui.graphics.Color
-    get() = com.micshare.app.ui.theme.MicshareOnSurface

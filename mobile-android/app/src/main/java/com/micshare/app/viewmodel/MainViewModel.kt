@@ -8,9 +8,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.SelectBuilder
-import kotlinx.coroutines.selects.onReceive
-import kotlinx.coroutines.selects.select
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -73,7 +70,7 @@ class MainViewModel : ViewModel() {
         try {
             discoverySocket?.receive(packet)
             val data = packet.data.copyOfRange(0, packet.length)
-            val beacon = parseBeacon(data, packet.address.hostAddress)
+            val beacon = parseBeacon(data, packet.address.hostAddress ?: "")
             if (beacon != null) {
                 discoveredServers.update { current ->
                     if (current.none { it.ip == beacon.ip }) {
@@ -237,7 +234,7 @@ class MainViewModel : ViewModel() {
                 putShort(0) // Flags
                 putInt(seq) // Sequence
                 putInt(System.currentTimeMillis().toInt()) // Capture timestamp
-                putShort(length * 2) // Payload length in bytes
+                putShort((length * 2).toShort()) // Payload length in bytes
                 put(1) // Channels
                 put(0) // Codec (0 = PCM)
             }.array()
