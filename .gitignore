@@ -9,6 +9,10 @@ build/
 *.apk
 *.aab
 
+# Rust
+target/
+**/target/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -29,3 +33,13 @@ yarn-error.log*
 .expo-shared/
 android/
 ios/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Debug symbols
+*.pdb
+*.dSYM
