@@ -43,3 +43,9 @@ ios/
 # Debug symbols
 *.pdb
 *.dSYM
+
+# Keystore and secrets (generated locally, not committed)
+*.keystore
+github-secrets.txt
+keystore-base64.txt
+generate-keystore.sh
