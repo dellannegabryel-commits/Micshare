@@ -64,7 +64,7 @@ jobs:
         if: env.ANDROID_KEYSTORE_BASE64 != ''
         working-directory: ./mobile-android
         run: |
-          cat > local.properties <<EOF
+          cat > gradle.properties <<EOF
           android.keystore.path=${{ steps.decode_keystore.outputs.keystore_path }}
           android.keystore.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           android.key.alias=${{ secrets.ANDROID_KEY_ALIAS }}
@@ -89,7 +89,9 @@ jobs:
 
       - name: Build Release APK
         working-directory: ./mobile-android
-        run: ./gradlew :app:assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+        env:
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Rename and copy APK
         id: rename_apk
@@ -138,7 +140,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: packages/pc-ui/package-lock.json
 
