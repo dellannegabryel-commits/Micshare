@@ -39,8 +39,11 @@ android {
                 this.keyAlias = keyAlias
                 this.keyPassword = keyPassword
             } else {
-                // For local development without properties, use debug signing
-                throw GradleException("Release keystore properties not found. Set android.keystore.path, android.keystore.password, android.key.alias, android.key.password in local.properties or as environment variables.")
+                // Fallback to debug signing for CI builds without keystore
+                storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+                storePassword = "android"
+                this.keyAlias = "androiddebugkey"
+                this.keyPassword = "android"
             }
         }
     }
