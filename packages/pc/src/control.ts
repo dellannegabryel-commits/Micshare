@@ -1,13 +1,13 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { encodeCtrl, parseCtrl, type CtrlMessage } from '@micshare/protocol';
+import { encodeCtrl, parseCtrl, type CtrlMessage, type Hello, type Welcome, type ErrorMsg } from '@micshare/protocol';
 
 export interface ControlConfig {
   port: number;
-  pairingCode: string;
-  onHello: (token: string, sessionId: string) => Promise<boolean>;
   onMute: (value: boolean) => void;
   onVolume: (value: number) => void;
   onBye: (sessionId: string) => void;
+  onHello?: (sessionId: string, codec: string) => void;
+  defaultCodec?: 'pcm' | 'opus';
 }
 
 export class ControlServer {
@@ -18,8 +18,11 @@ export class ControlServer {
   constructor(private config: ControlConfig) {}
 
   start(): void {
-    this.wss = new WebSocketServer({ port: this.config.port });
-    
+    this.wss = new WebSocketServer({
+      port: this.config.port,
+      host: '0.0.0.0',
+    });
+
     this.wss.on('error', (err: Error) => {
       console.error('[controle] WebSocket server error:', err.message);
     });
@@ -39,33 +42,33 @@ export class ControlServer {
 
           switch (message.t) {
             case 'hello': {
-              const ok = this.config.onHello(message.token, crypto.randomUUID().slice(0, 8));
-              ok.then((accepted) => {
-                try {
-                  if (!accepted) {
-                    ws.send(encodeCtrl({ t: 'error', code: 'bad_token', message: 'código de pareamento inválido' }));
-                    ws.close();
-                    return;
-                  }
-                  authenticated = true;
-                  sessionId = crypto.randomUUID().slice(0, 8);
-                  this.sessions.set(sessionId, ws);
-                  ws.send(
-                    encodeCtrl({
-                      t: 'welcome',
-                      sessionId,
-                      audioPort: 41235,
-                      targetBufferMs: 30,
-                    })
-                  );
-                } catch (err) {
-                  console.error('[controle] Error in hello handler:', (err as Error).message);
-                  ws.close();
+              try {
+                authenticated = true;
+                sessionId = crypto.randomUUID().slice(0, 8);
+                this.sessions.set(sessionId, ws);
+
+                // Negotiate codec
+                const requestedCodec = message.codec === 'opus' ? 'opus' : 'pcm';
+                const supported = message.supportedCodecs || ['pcm'];
+                const negotiatedCodec = supported.includes(requestedCodec) ? requestedCodec : 'pcm';
+
+                if (this.config.onHello) {
+                  this.config.onHello(sessionId, negotiatedCodec);
                 }
-              }).catch((err) => {
-                console.error('[controle] Error in onHello promise:', (err as Error).message);
+                ws.send(
+                  encodeCtrl({
+                    t: 'welcome',
+                    sessionId,
+                    audioPort: 41235,
+                    targetBufferMs: 30,
+                    codec: negotiatedCodec,
+                  })
+                );
+                console.log(`[controle] Codec negotiated: ${negotiatedCodec} (requested: ${requestedCodec})`);
+              } catch (err) {
+                console.error('[controle] Error in hello handler:', (err as Error).message);
                 ws.close();
-              });
+              }
               break;
             }
             case 'mute': {
@@ -84,7 +87,6 @@ export class ControlServer {
               } catch (err) {
                 console.error('[controle] Error in onVolume:', (err as Error).message);
               }
-              break;
             }
             case 'bye': {
               if (sessionId) {
@@ -117,7 +119,7 @@ export class ControlServer {
     });
 
     this.wss.on('listening', () => {
-      console.log(`[controle] WebSocket server listening on port ${this.config.port}`);
+      console.log(`[controle] WebSocket server listening on port ${this.config.port} (0.0.0.0)`);
     });
   }
 

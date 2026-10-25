@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: 14 165 233; /* sky-500 */
+    --color-primary-hover: 2 132 199; /* sky-600 */
+    --color-surface: 250 250 250; /* neutral-50 */
+    --color-surface-elevated: 255 255 255;
+    --color-border: 229 229 229; /* neutral-200 */
+    --color-text: 23 23 23; /* neutral-900 */
+    --color-text-secondary: 82 82 82; /* neutral-600 */
+    --color-success: 34 197 94; /* green-500 */
+    --color-warning: 234 179 8; /* yellow-500 */
+    --color-error: 239 68 68; /* red-500 */
+  }
+
+  .dark {
+    --color-primary: 56 189 248; /* sky-400 */
+    --color-primary-hover: 14 165 233; /* sky-500 */
+    --color-surface: 23 23 23; /* neutral-900 */
+    --color-surface-elevated: 39 39 39; /* neutral-800 */
+    --color-border: 63 63 63; /* neutral-700 */
+    --color-text: 250 250 250; /* neutral-50 */
+    --color-text-secondary: 161 161 161; /* neutral-400 */
+    --color-success: 74 222 128; /* green-400 */
+    --color-warning: 250 204 21; /* yellow-400 */
+    --color-error: 248 113 113; /* red-400 */
+  }
+
+  * {
+    @apply border-neutral-200 dark:border-neutral-700;
+  }
+
+  body {
+    @apply bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50 font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-white/60 dark:bg-neutral-900/60 backdrop-blur-lg border border-neutral-200/50 dark:border-neutral-700/50 rounded-2xl;
+  }
+
+  .glass-panel-elevated {
+    @apply bg-white/80 dark:bg-neutral-900/80 backdrop-blur-xl border border-neutral-200/30 dark:border-neutral-700/30 rounded-2xl shadow-lg;
+  }
+
+  .btn-primary {
+    @apply px-6 py-3 bg-sky-500 hover:bg-sky-600 text-white font-medium rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-6 py-3 bg-neutral-100 hover:bg-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-900 dark:text-neutral-100 font-medium rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-neutral-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900;
+  }
+
+  .btn-danger {
+    @apply px-6 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900;
+  }
+
+  .stat-pill {
+    @apply px-4 py-2 bg-white/50 dark:bg-neutral-800/50 backdrop-blur-sm border border-neutral-200/50 dark:border-neutral-700/50 rounded-full;
+  }
+
+  .input-select {
+    @apply w-full px-4 py-2.5 bg-white/50 dark:bg-neutral-800/50 backdrop-blur-sm border border-neutral-200/50 dark:border-neutral-700/50 rounded-xl text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all duration-200;
+  }
+
+  .slider-track {
+    @apply h-1.5 bg-neutral-200 dark:bg-neutral-700 rounded-full;
+  }
+
+  .slider-thumb {
+    @apply w-6 h-6 bg-sky-500 rounded-full shadow-lg border-2 border-white dark:border-neutral-900 transition-transform duration-100 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(161 161 161) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgb(161 161 161);
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(115 115 115);
+  }
+}

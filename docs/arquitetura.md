@@ -16,14 +16,14 @@ Transformar um celular em microfone de entrada do PC, via Wi-Fi local, com latê
 
 ```
 ┌────────────┐                                ┌──────────────────────────────┐
-│  Celular   │  1) beacon UDP broadcast :41234 │  PC (Node 24, TypeScript)    │
-│  (RN/TS)   │ <──────────────────────────────│  beacon + descoberta         │
+│  Celular   │  1) beacon UDP broadcast :41234 │  PC (Rust + Tauri 3)         │
+│  (Kotlin)  │ <──────────────────────────────│  beacon + descoberta         │
 │            │                                │                              │
 │ captura    │  2) WebSocket :41236 (controle) │  servidor controle           │
 │ PCM 10 ms  │ <─────────────────────────────>│                              │
 │            │                                │                              │
 │            │  3) UDP :41235 (áudio, 1 via)   │  jitter buffer               │
-│            │ ──────────────────────────────>│  → sink de áudio (PortAudio) │
+│            │ ──────────────────────────────>│  → sink de áudio (cpal/WASAPI)│
 └────────────┘                                │  → "CABLE Input (VB-Audio)"  │
                                               └───────────────┬──────────────┘
                                                               │ CABLE Output (device de gravação)
@@ -162,13 +162,32 @@ Micshare/
 │   ├── roadmap.md            # fases e gates
 │   └── sprint-01.md          # plano da sprint corrente
 └── packages/
-    ├── protocol/             # header binário, encode/decode, validação, testes
+    ├── protocol/             # header binário, encode/decode, validação, testes (TypeScript)
     │   └── src/{audioFrame.ts,ctrl.ts}
-    └── pc/                   # servidor: beacon, ws, udp, jitter, sink
-        └── src/{index.ts,discovery.ts,control.ts,audioServer.ts,jitterBuffer.ts,sink.ts}
+    ├── pc/                   # servidor legacy (Node.js/TypeScript) — deprecated
+    │   └── src/{index.ts,discovery.ts,control.ts,audioServer.ts,jitterBuffer.ts,sink.ts}
+    └── pc-ui/                # servidor PC principal (Rust + Tauri 3) — binário nativo
+        ├── src/              # React 18 + TypeScript + Vite frontend
+        │   ├── components/
+        │   ├── hooks/
+        │   └── types/
+        └── src-tauri/        # Rust backend
+            ├── src/
+            │   ├── audio/mod.rs      # JitterBuffer, AudioSink (cpal), AudioCapture
+            │   ├── control/mod.rs    # WebSocket control server
+            │   ├── discovery/mod.rs  # UDP beacon sender/listener
+            │   ├── protocol/mod.rs   # Binary protocol (AudioFrameHeader, CtrlMessage)
+            │   ├── server.rs         # MicshareServer orchestration
+            │   ├── commands.rs       # Tauri commands
+            │   ├── lib.rs            # Library entry point
+            │   └── main.rs           # App entry point
+            ├── tauri.conf.json       # Tauri config
+            └── Cargo.toml            # Rust dependencies
 ```
 
-`packages/pc` roda como CLI no MVP (`npm --prefix packages/pc run dev`), e só depois ganha UI (Tauri ou painel web local). Não começamos por UI: a UI de um app de áudio é uma tela com 3 controles, o risco está no áudio.
+`packages/pc` (legacy) roda como CLI (`npm --prefix packages/pc run dev`) mas está deprecated.
+`packages/pc-ui` é o servidor principal: `npm --prefix packages/pc-ui run tauri:dev` para desenvolvimento, `npm --prefix packages/pc-ui run tauri:build` gera instaladores MSI/NSIS.
+Não começamos por UI: a UI de um app de áudio é uma tela com 3 controles, o risco está no áudio.
 
 ### Cliente Mobile (Fase 2+)
 
