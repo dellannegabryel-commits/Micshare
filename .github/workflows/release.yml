@@ -49,7 +49,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('mobile-android/**/*.gradle*', 'mobile-android/**/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile-android/**/*.gradle.kts', 'mobile-android/**/gradle-wrapper.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
 
@@ -75,16 +75,16 @@ jobs:
         working-directory: ./mobile-android
         run: chmod +x gradlew
 
-      - name: Update version in build.gradle
+      - name: Update version in build.gradle.kts
         working-directory: ./mobile-android
         run: |
           VERSION="${{ steps.extract_version.outputs.version }}"
-          # Update versionName and versionCode
-          sed -i "s/versionName \".*\"/versionName \"$VERSION\"/" app/build.gradle
+          # Update versionName and versionCode in build.gradle.kts
+          sed -i "s/versionName = \".*\"/versionName = \"$VERSION\"/" app/build.gradle.kts
           # Calculate versionCode from semver (major*1000000 + minor*10000 + patch*100)
           IFS='.' read -r major minor patch <<< "$VERSION"
           versionCode=$((major * 1000000 + minor * 10000 + patch * 100))
-          sed -i "s/versionCode [0-9]*/versionCode $versionCode/" app/build.gradle
+          sed -i "s/versionCode = [0-9]*/versionCode = $versionCode/" app/build.gradle.kts
           echo "Updated versionName to $VERSION, versionCode to $versionCode"
 
       - name: Build Release APK
