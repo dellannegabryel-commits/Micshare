@@ -1,5 +1,15 @@
 <resources>
-  <string name="app_name">Micshare</string>
-  <string name="expo_splash_screen_resize_mode" translatable="false">contain</string>
-  <string name="expo_splash_screen_status_bar_translucent" translatable="false">false</string>
+    <string name="app_name">Micshare</string>
+    <string name="discover_servers">Descobrir servidores</string>
+    <string name="pairing_code_hint">Código de 6 dígitos</string>
+    <string name="connect">Conectar</string>
+    <string name="start_streaming">Iniciar streaming</string>
+    <string name="stop_streaming">Parar streaming</string>
+    <string name="disconnect">Desconectar</string>
+    <string name="audio_level">Nível de áudio</string>
+    <string name="searching">Procurando...</string>
+    <string name="no_servers_found">Nenhum servidor encontrado</string>
+    <string name="pairing_failed">Emparelhamento falhou</string>
+    <string name="connected">Conectado</string>
+    <string name="streaming">Transmitindo</string>
 </resources>
