@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+  - mobile
+allowBuilds:
+  esbuild: true
+  naudiodon2: true
+  segfault-handler: true
