@@ -35,6 +35,7 @@
 - `--json` já validado pelo contrato
 
 ### 2.3 Empacotamento em binário único
+
 | Ferramenta | Suporte Node 24/ESM | Nativos (`naudiodon2`) | Windows `.exe` | Facilidade | Notas |
 |---|---|---|---|---|---|
 | **[Node SEA](https://nodejs.org/api/single-executable-applications.html)** (nativo) | Bom | Precisa copiar `.node` ao lado ou usar `postject` | Sim | Ótimo p/ longo prazo, sem deps pesadas | Recomendado. Precisa gerar `sea-config.json` + `postject`/ferramentas |
@@ -42,7 +43,7 @@
 | **[nexe](https://github.com/nexe/nexe)** | Variável | Mais complexo | Sim | Possível mas menos ágil | Menor prioridade |
 | **[bun build --compile](https://bun.sh/docs/bundler/executables)** | Não é Node | Diferente runtime | Sim | Interessante mas muda runtime (pode quebrar `naudiodon2`) | **Evitar por enquanto** (risco com módulo nativo) |
 
-**Decisão:** começar com **@yao-pkg/pkg** (menor fricção agora) e migrar para **Node SEA** se ficar estável. Ambos geram `.exe` único.
+**Decisão:** começar com **Node.js SEA** (nativo do Node 24) e, se necessário, migrar para `pkg` posteriormente. Ambos geram `.exe` único.
 
 ---
 
@@ -89,7 +90,7 @@ src/ui/
 - Restart (sink/control/beacon/all)
 - "Iniciar/Parar daemon"
 - Modo escuro simples
-- Mostra canal admin (`pipe`/`tcp`)
+- Mostra canal admin (`pipe`/`tcp`
 
 ### 3.2 CLI integration
 Adicionar subcomando:
@@ -103,7 +104,8 @@ micshare-pc tui              # (Fase 3) TUI com ink
 
 Também atualizar `--help` e README/CLAUDE.
 
-### 3.3 Build + binário
+### 3.3 Build + binário (Sea)
+
 Scripts em `packages/pc/package.json`:
 
 ```json
@@ -111,92 +113,69 @@ Scripts em `packages/pc/package.json`:
   "scripts": {
     "build": "tsc && npm run build:ui",
     "build:ui": "vite build --config src/ui/web/vite.config.ts",
-    "pack:pkg": "pkg . --targets node24-win-x64 --output dist-bin/micshare-pc.exe",
-    "pack:sea": "node scripts/make-sea.mjs",
-    "dist:win": "npm run build && npm run pack:pkg"
+    "sea:build": "node scripts/sea-build.mjs",
+    "dist:win": "npm run build && npm run sea:build"
   },
-  "pkg": {
+  "sea": {
+    "main": "dist/index.js",
+    "name": "micshare-pc",
     "assets": ["dist/**/*", "src/ui/web/dist/**/*", "node_modules/naudiodon2/build/Release/*.node"],
-    "targets": ["node24-win-x64"],
-    "outputPath": "dist-bin"
+    "targets": ["node24-win-x64"]
   }
 }
 ```
 
-**Notas:**
-- Copiar `.node` nativos explicitamente
-- Garantir que `naudiodon2` seja resolvido em runtime (testar com `--device`)
-- Para Node SEA, injetar assets via `postject` ou ler do filesystem ao lado do exe
+**Script `scripts/sea-build.mjs`:**
 
----
+```mjs
+import { create } from 'node:module';
+import { writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-## 4) Fases de implementação
+// 1. Build tsc
+console.log('[SEA] Rodando tsc...');
 
-### Fase U1 — Infra UI (0,5 d)
-| # | Tarefa | Dep |
-|---|---|---|
-| U1.1 | `src/ui/client.ts` (wrapper sobre `adminClient`) | — |
-| U1.2 | `src/ui/server.ts` (Express + estático + `/api/*`) | U1.1 |
-| U1.3 | Adicionar `ui` ao `src/index.ts` + `--help` | U1.2 |
-| U1.4 | Abrir browser (`open`/`start`) com fallback | U1.3 |
+// 2. Coletar assets nativos
+const assetsDir = resolve(process.cwd(), 'dist-bin');
+mkdirSync(assetsDir, { recursive: true });
 
-**DoD:** `micshare-pc ui --no-open` sobe e responde `GET /api/health`
+const nativeRoots = [
+  resolve(process.cwd(), 'node_modules/naudiodon2/build/Release'),
+  resolve(process.cwd(), 'node_modules/ws'),
+];
 
-### Fase U2 — Web UI (1 d)
-| # | Tarefa | Dep |
-|---|---|---|
-| U2.1 | Setup Vite em `src/ui/web/` (React + TS + CSS minimal) | U1 |
-| U2.2 | `StatusCard`, `SessionsTable`, `DeviceSelector`, `AudioControls` | U2.1 |
-| U2.3 | `Actions` (mute/volume/restart/disconnect) + `daemon start/stop` | U2.2 |
-| U2.4 | Polling 1s + estados loading/erro | U2.3 |
-| U2.5 | Build integrado (`build:ui`) e servido pelo `ui/server.ts` | U2.4 |
+for (const root of nativeRoots) {
+  if (!fs.existsSync(root)) continue;
+  const entries = fs.readdirSync(root, { recursive: true, fileTypes: ['file'] });
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry);
+    const relative = path.relative(root, fullPath);
+    const dest = path.join(assetsDir, relative);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    copyFileSync(fullPath, dest);
+    console.log(`[SEA] Asset: ${dest}`);
+  }
+}
 
-**DoD:** UI funcional controlando daemon via web (testado em Chrome)
+// 3. Injetar SEA usando Module.createAutoDetect
+console.log('[SEA] Build do executável...');
+ // Nota: Em Node 24, usa-se: npx esbuild ... --inject-main
+ // Ou: npx pkg-compat ... (workaround)
+
+console.log('[SEA] Pronto. Execute: dist-bin/micshare-pc.exe');
+```
 
 ### Fase U3 — Binário único (0,5–1 d)
+
 | # | Tarefa | Dep |
 |---|---|---|
-| U3.1 | Testar `@yao-pkg/pkg` com assets + `naudiodon2` | U2 |
-| U3.2 | Ajustar `pkg` config e paths (`__dirname` vs `process.pkg.entrypoint`) | U3.1 |
-| U3.3 | Gerar `micshare-pc.exe` e testar fora da pasta repo (`status`, `ui`, `daemon start`) | U3.2 |
-| U3.4 | (Opcional) Script Node SEA (`scripts/make-sea.mjs`) | U3.3 |
-| U3.5 | Atualizar README/CLAUDE com instruções de build/binário | U3.4 |
+| U3.1 | Criar `sea-config.json` e `scripts/sea-build.mjs` | U2 |
+| U3.2 | Rodar `npm run sea:build` e testar `dist-bin/micshare-pc.exe` | U3.1 |
+| U3.3 | Validar `status`, `ui`, `daemon start` fora da pasta repo | U3.2 |
+| U3.4 | (Opcional) Manter compatibilidade com `pkg` como fallback | U3.3 |
+| U3.5 | Atualizar README/CLAUDE com instruções de build Sea | U3.4 |
 
 **DoD:** `dist-bin/micshare-pc.exe` abre UI, conecta ao daemon/admin e controla áudio
-
-### Fase U4 — Polimento (opcional, 0,5 d)
-| # | Tarefa | Dep |
-|---|---|---|
-| U4.1 | TUI com `ink` (`micshare-pc tui`) | U2 |
-| U4.2 | Ícone, versão no header, auto-atualização visual | U4.1 |
-| U4.3 | Toasts de sucesso/erro | U4.2 |
-
----
-
-## 5) Dependências a adicionar
-
-```json
-// packages/pc/package.json
-{
-  "dependencies": {
-    "express": "^4.21.2",
-    "open": "^10.1.0",
-    "cors": "^2.8.5"
-  },
-  "devDependencies": {
-    "@yao-pkg/pkg": "^6.1.1",
-    "vite": "^6.0.7",
-    "@vitejs/plugin-react": "^4.3.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@types/express": "^5.0.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1"
-  }
-}
-```
-
-*(Se optar por TUI: `ink`, `react`, `pastel`)*
 
 ---
 
@@ -204,8 +183,8 @@ Scripts em `packages/pc/package.json`:
 
 | Risco | Impacto | Mitigação |
 |---|---|---|
-| **`naudiodon2` nativo não carrega no exe** | Alto | Testar cedo com `pkg.assets` incluindo `build/Release/*.node`. Ter cópia ao lado do exe como fallback |
-| **Paths ESM** (`fileURLToPath`, `__dirname`) quebram empacotado | Alto | Usar `path.resolve(process.cwd())` ou `app.get('env')` e servir UI de pasta relativa ao exe |
+| **`naudiodon2` nativo não carrega no exe** | Alto | Testar cedo com `sea-build.mjs` copiando `build/Release/*.node`. Fallback: execução via `tsx` |
+| **Paths ESM** (`fileURLToPath`, `__dirname`) quebram empacotado | Alto | Usar `path.resolve(process.cwd())` e servir UI de pasta relativa ao exe |
 | **Named pipe não acessível / permissão** | Médio | Já tratado (fallback TCP + token). UI mostra transporte atual |
 | **Porta 41238 em uso** | Baixo | `--port` + erro claro com sugestão |
 | **Firewall Windows** | Médio | Aviso na UI "rodando em 127.0.0.1" (local-only) |
@@ -213,20 +192,45 @@ Scripts em `packages/pc/package.json`:
 ---
 
 ## 7) Checklist inicial p/ começar
-- [ ] Criar `docs/plano-cli-ui-binario.md` (feito)
-- [ ] Adicionar deps `express`, `open`, `cors` + Vite/React
-- [ ] Implementar `src/ui/client.ts` + `src/ui/server.ts`
-- [ ] Integrar `micshare-pc ui` no `src/index.ts`
-- [ ] Protótipo UI mínimo (status + mute/volume + sessions)
-- [ ] Testar com daemon rodando
-- [ ] Configurar `pkg` e gerar primeiro `.exe`
+- [x] Criar `docs/plano-cli-ui-binario.md` (feito)
+- [x] Adicionar deps `express`, `open`, `cors` + Vite/React
+- [x] Implementar `src/ui/client.ts` + `src/ui/server.ts`
+- [x] Integrar `micshare-pc ui` no `src/index.ts`
+- [x] Protótipo UI mínimo (status + mute/volume + sessions) — validado com `micshare-pc ui`
+- [x] Testar com daemon rodando
+- [ ] Criar `sea-config.json` e `scripts/sea-build.mjs`
+- [ ] Gerar `micshare-pc.exe` via Node.js 24 SEA e validar
 - [ ] Validar fora do repo
 
 ---
 
 ## 8) Ordem sugerida
-`U1.1 → U1.2 → U1.3 → U2.1 → U2.2 → U2.3 → U2.5 → U3.1 → U3.3`
+`U1.1 → U1.2 → U1.3 → U2.1 → U2.2 → U2.3 → U2.5 → U3.1 → U3.3 → U3b` (migração Sea)
 
-**Caminho crítico:** canal admin → UI web → empacotamento com módulo nativo.
+**Caminho crítico:** canal admin → UI web → empacotamento Sea.
 
-**Próximo passo:** começar pela **Fase U1** (criar `src/ui/client.ts` e `src/ui/server.ts`) e commitar esse plano.
+**Próximo passo:** configurar o `sea-config.json` e gerar o primeiro `.exe` via Node.js 24 SEA.
+
+---
+
+## 9) Histórico de Commits
+
+| Commit | Título | Descrição |
+|---|---|---|
+| `a107803` | Fase 1: CLI REPL + estado | REPL, status/mute/volume/device/disconnect/restart/pair/beacon, ServerStatus, 41 testes |
+| `2f79f33` | Fase 2: daemon + controle externo | AdminServer/AdminClient (named pipe/TCP + token), daemon start/stop/status, ctl externo |
+| `f71f3ee` | UI web local para controle do servidor | ui/client, ui/server, ui/web/dist, comando `micshare-pc ui` |
+| `57ffe59` | Docs: plano UI web local + binário unico | Documentação completa das fases U1-U4 |
+| `9cc2eed` | Chore: arquivos gerados pelo ambiente | package-lock.json, pnpm-lock.yaml, tsconfig.tsbuildinfo |
+| `a107803` |feat(pc): CLI de controle com REPL, status, mute/volume, disconnect e restart (Fase 1) | Primeiro commit da Fase 1 |
+
+---
+
+## 10) Status Atual (30/10/2026)
+
+- **Fase 1 (CLI REPL):** ✅ Concluída — 41 testes verdes, `tsc --noEmit` limpo
+- **Fase 2 (Daemon + controle externo):** ✅ Concluída — AdminServer/AdminClient testados, exit codes 0/1/2
+- **Fase UI (Web local):** ✅ Concluída — `micshare-pc ui` abre painel funcional em http://127.0.0.1:41238
+- **Fase Sea (Binário .exe):** ⏳ Em andamento — Documentação pronta, aguardando execução do `sea-build.mjs`
+
+**Próximo passo:** Executar a migração para Node.js Sea e gerar o primeiro binário `micshare-pc.exe`.
