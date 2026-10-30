@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import open from 'open';
 import { AudioServer, type ServerConfig } from './audioServer.js';
 import { AudioSink } from './sink.js';
 import { VERSION, type ServerStatus } from './serverState.js';
@@ -17,6 +18,7 @@ import {
   waitForExit,
   writeDaemonInfo,
 } from './cli/daemon.js';
+import { startUiServer } from './ui/server.js';
 
 const HELP = `micshare-pc ${VERSION} — servidor de áudio do PC
 
@@ -42,6 +44,7 @@ Opções:
   --verbose, -v            linha de status 1 Hz no terminal
   --json                   saída JSON
   --no-repl                não abre o prompt
+  --no-open                não abre o navegador (com "ui")
   --list-devices           alias de "devices"
   --install-vbcable        executa o instalador do VB-Cable (precisa de Admin)
   --help, -h               esta ajuda
@@ -62,6 +65,7 @@ interface CliValues {
   verbose?: boolean;
   json?: boolean;
   'no-repl'?: boolean;
+  'no-open'?: boolean;
   'list-devices'?: boolean;
   'install-vbcable'?: boolean;
   help?: boolean;
@@ -404,6 +408,7 @@ async function main(): Promise<void> {
         verbose: { type: 'boolean', short: 'v' },
         json: { type: 'boolean' },
         'no-repl': { type: 'boolean' },
+        'no-open': { type: 'boolean' },
         'list-devices': { type: 'boolean' },
         'install-vbcable': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
@@ -444,6 +449,29 @@ async function main(): Promise<void> {
   if (command === 'daemon') {
     process.exitCode = await handleDaemon(rest[0] ?? 'status', values, json);
     return;
+  }
+
+  if (command === 'ui') {
+    const uiPort = parseNumber('--port', values.port) ?? 41238;
+    try {
+      const { url } = await startUiServer({ port: uiPort, host: '127.0.0.1' });
+      if (!values['no-open']) {
+        try {
+          await open(url);
+        } catch (err) {
+          console.warn(`não foi possível abrir o navegador: ${(err as Error).message}`);
+        }
+      }
+      console.log('Pressione Ctrl+C para encerrar a UI.');
+      process.on('SIGINT', () => process.exit(0));
+      process.on('SIGTERM', () => process.exit(0));
+      await new Promise<void>(() => {
+        // mantém vivo
+      });
+    } catch (err) {
+      console.error('falha ao iniciar a UI:', (err as Error).message);
+      process.exit(1);
+    }
   }
 
   if (command !== 'run' && command !== 'dev') {
