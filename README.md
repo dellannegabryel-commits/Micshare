@@ -14,6 +14,7 @@ celular (React Native) ──UDP/Wi-Fi──> PC (Node + TypeScript) ──> cab
 | [`docs/roadmap.md`](docs/roadmap.md) | fases 0–5 com gates verificáveis (~6 semanas até MVP utilizável) |
 | [`docs/sprint-01.md`](docs/sprint-01.md) | plano da sprint atual (PoC de áudio), tarefas, DoD e checklist de teste |
 | [`docs/plano-cli.md`](docs/plano-cli.md) | plano da CLI de controle do PC: status, mute/volume, disconnect, restart, daemon local |
+| [`docs/plano-cli-ui-binario.md`](docs/plano-cli-ui-binario.md) | plano da UI web local + binário único (pkg/Node SEA) para a CLI do PC |
 | [`documenta_o_de_arquitetura_microfone_p2p.md`](documenta_o_de_arquitetura_microfone_p2p.md) | briefing original |
 
 ## Estado
