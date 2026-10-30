@@ -245,15 +245,23 @@ export function findCommand(name: string): CommandDef | undefined {
   return commands.find((c) => c.name === needle || c.aliases?.includes(needle));
 }
 
+/** Executa um comando já parseado (usado pelo canal administrativo). */
+export async function runCommandArgs(
+  ctx: CommandContext,
+  name: string,
+  args: string[]
+): Promise<CommandResult> {
+  const cmd = findCommand(name);
+  if (!cmd) {
+    throw new CommandError(`comando desconhecido: "${name}". Use "help" para ver os comandos.`);
+  }
+  return (await cmd.run(ctx, args)) ?? {};
+}
+
 /** Executa uma linha do REPL (ou um comando vindo do daemon na Fase 2). */
 export async function runCommand(ctx: CommandContext, line: string): Promise<CommandResult> {
   const parsed = parseLine(line);
   if (!parsed) return {};
-
-  const cmd = findCommand(parsed.command);
-  if (!cmd) {
-    throw new CommandError(`comando desconhecido: "${parsed.command}". Use "help" para ver os comandos.`);
-  }
 
   let json = ctx.json;
   const args = parsed.args.filter((arg) => {
@@ -264,5 +272,5 @@ export async function runCommand(ctx: CommandContext, line: string): Promise<Com
     return true;
   });
 
-  return (await cmd.run({ ...ctx, json }, args)) ?? {};
+  return runCommandArgs({ ...ctx, json }, parsed.command, args);
 }

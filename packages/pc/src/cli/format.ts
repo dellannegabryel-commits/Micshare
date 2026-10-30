@@ -101,3 +101,49 @@ export function formatMute(mute: boolean): string {
 export function formatVolume(volume: number): string {
   return `volume ${volume.toFixed(2)}`;
 }
+
+/** Formata a resposta de um comando remoto (`ctl`) para humanos. */
+export function formatAdminResult(cmd: string, data: unknown): string {
+  if (data === undefined || data === null) return 'ok';
+
+  switch (cmd) {
+    case 'status':
+      return formatStatus(data as ServerStatus);
+    case 'stats':
+      return formatMetrics(data as MetricsSnapshot);
+    case 'clients':
+    case 'sessions':
+      return formatSessions(data as SessionInfo[]);
+    case 'devices':
+      return formatDevices(data as DeviceInfo[]);
+    case 'device': {
+      const d = data as DeviceInfo;
+      return `saída de áudio: [${d.id}] ${d.name} (${d.channels}ch)`;
+    }
+    case 'mute':
+      return formatMute(Boolean((data as { mute: boolean }).mute));
+    case 'volume':
+      return formatVolume(Number((data as { volume: number }).volume));
+    case 'disconnect': {
+      const d = data as { target: string; closed: number };
+      return d.closed === 0 ? 'nenhuma sessão para desconectar' : `${d.closed} sessão(ões) encerrada(s)`;
+    }
+    case 'restart': {
+      const d = data as { scope: string; elapsedMs: number };
+      return `restart ${d.scope} concluído em ${d.elapsedMs}ms`;
+    }
+    case 'pair': {
+      const d = data as { enabled: boolean; code: string | null };
+      return d.enabled ? `pareamento ligado · código ${d.code}` : 'pareamento desligado';
+    }
+    case 'beacon': {
+      const d = data as { running: boolean; intervalMs: number };
+      return `beacon ${d.running ? 'on' : 'off'} · intervalo ${d.intervalMs}ms`;
+    }
+    case 'stop':
+      return 'servidor encerrando...';
+    default:
+      return typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  }
+}
+

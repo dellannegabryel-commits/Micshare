@@ -6,6 +6,8 @@ import { CommandError, runCommand } from './commands.js';
 export interface ReplOptions {
   json?: boolean;
   prompt?: string;
+  /** encerramento customizado (para também fechar o canal admin e limpar o PID) */
+  shutdown?: () => Promise<void>;
 }
 
 /**
@@ -33,7 +35,8 @@ export async function startRepl(server: AudioServer, options: ReplOptions = {}):
     } catch {
       // já fechado
     }
-    await server.stop();
+    if (options.shutdown) await options.shutdown();
+    else await server.stop();
     process.exit(code);
   };
 

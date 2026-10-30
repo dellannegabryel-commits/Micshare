@@ -91,6 +91,10 @@ npm --prefix packages/pc run dev                    # sobe o servidor + prompt (
 npm --prefix packages/pc run dev -- devices         # List audio output devices
 npm --prefix packages/pc run dev -- --device "CABLE" --verbose  # Run PC server
 npm --prefix packages/pc run dev -- --no-repl       # servidor sem prompt
+npm --prefix packages/pc run dev -- daemon start    # daemon desacoplado (Fase 2)
+npm --prefix packages/pc run dev -- status --json   # consulta externa (exit 2 se parado)
+npm --prefix packages/pc run dev -- ctl restart --sink
+npm --prefix packages/pc run dev -- daemon stop
 npm --prefix packages/pc run build                  # Build PC package
 npm --prefix packages/pc run test                   # Run PC tests (tsx --test)
 ```

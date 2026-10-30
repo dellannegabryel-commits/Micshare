@@ -225,6 +225,8 @@ Não mexer em `packages/protocol`: o protocolo admin é **local e privado**, nã
 
 **DoD:** em dois terminais, `micshare-pc daemon start` + `micshare-pc ctl restart --sink` funciona; `micshare-pc status --json` é consumível por script; restart não deixa porta órfã (`Get-NetUDPEndpoint -LocalPort 41235` aponta para o novo PID).
 
+**Status (30/10/2026): concluída.** `AdminServer`/`AdminClient` (named pipe + fallback TCP 41237, token de 32 bytes em `%LOCALAPPDATA%\Micshare\admin.token`), `daemon start|stop|status` com PID em `daemon.json`, `status`/`ctl` externos com exit codes 0/1/2. Validado manualmente: `daemon start` → `status` (texto e JSON) → `ctl clients` → `ctl mute on` → `ctl volume 2` → `ctl restart --sink` → `ctl restart --all` → `ctl disconnect all` (sessão `f069a770` encerrada) → `daemon stop` → `status` exit 2, sem porta órfã. Testes: `admin.test.ts` cobre auth, erro estruturado e `stop` (45 verdes no total).
+
 ### Fase 3 — Operação e acabamento (0,5–1 d)
 
 | # | Tarefa | Dep |
@@ -319,3 +321,4 @@ Caminho crítico: **C1.1 → C1.2 → C1.6 → C2.1 → C2.2 → C3.6**.
 | Data | Fase | Resultado | Notas |
 |---|---|---|---|
 | 30/10/2026 | F1 | concluída | `tsc --noEmit` limpo, 41 testes verdes, smoke 14/14 (portas alternativas). Falta validação auditiva no VB-Cable (device ocupado por PID 11360). |
+| 30/10/2026 | F2 | concluída | Daemon + `status`/`ctl` externos, named pipe/TCP + token, exit codes 0/1/2. 45 testes verdes; smoke externo com `fakeClient --hello` e `disconnect all`. |

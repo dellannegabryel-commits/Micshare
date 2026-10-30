@@ -18,16 +18,25 @@ celular (React Native) ──UDP/Wi-Fi──> PC (Node + TypeScript) ──> cab
 
 ## Estado
 
-PoC de áudio (Sprint 01) funcionando: servidor UDP + jitter buffer + saída PortAudio/VB-Cable, controle WebSocket e beacon de descoberta. A CLI de controle do PC está na Fase 1 (REPL in-process); as Fases 2 (daemon/controle externo) e 3 (monitor/pareamento) estão descritas em [`docs/plano-cli.md`](docs/plano-cli.md).
+PoC de áudio (Sprint 01) funcionando: servidor UDP + jitter buffer + saída PortAudio/VB-Cable, controle WebSocket e beacon de descoberta. A CLI de controle do PC tem REPL in-process (Fase 1) e canal administrativo local com daemon (Fase 2); a Fase 3 (monitor/pareamento) está descrita em [`docs/plano-cli.md`](docs/plano-cli.md).
 
 ## CLI do PC
 
 ```bash
 npm --prefix packages/pc run dev                 # sobe o servidor e abre o prompt
 npm --prefix packages/pc run dev -- --device "CABLE Input" --verbose
-npm --prefix packages/pc run dev -- --no-repl    # sem prompt (serviço/terminal separado)
 npm --prefix packages/pc run dev -- devices      # lista as saídas de áudio
+
+# controle externo (Fase 2), de qualquer terminal:
+npm --prefix packages/pc run dev -- daemon start --device "CABLE Input"
+npm --prefix packages/pc run dev -- status            # exit 2 se o servidor estiver parado
+npm --prefix packages/pc run dev -- status --json     # contrato ServerStatus
+npm --prefix packages/pc run dev -- ctl mute on
+npm --prefix packages/pc run dev -- ctl restart --sink
+npm --prefix packages/pc run dev -- daemon stop
 ```
+
+O daemon usa named pipe `\\.\pipe\micshare-pc-<USUARIO>` (fallback TCP `127.0.0.1:41237`) com token em `%LOCALAPPDATA%\Micshare\admin.token`. Exit codes: `0` ok, `1` erro, `2` servidor parado.
 
 No prompt (`micshare>`):
 
