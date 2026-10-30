@@ -1,4 +1,4 @@
-# Plano — Interface/UI para a CLI do Micshare PC + Binário único
+# Plano �?" Interface/UI para a CLI do Micshare PC + Binário único
 
 **Objetivo:** criar uma interface mais amigável para controlar o servidor PC (status, sessões, mute/volume, device, restart, disconnect) reutilizando o canal administrativo já existente (`packages/pc/src/cli/adminClient.ts`) e gerar um binário único (`micshare-pc.exe`) para distribuição.
 
@@ -10,7 +10,7 @@
 - **CLI texto:** REPL in-process + `daemon`/`status`/`ctl` externos via named pipe/TCP + token
 - **Contrato único:** `ServerStatus` + registry de comandos em `src/cli/commands.ts`
 - **Canais:** UDP 41235, WS controle 41236, beacon 41234, admin local 41237/pipe
-- **Build:** `tsc` → `dist/`
+- **Build:** `tsc` �+' `dist/`
 - **Bin:** `"bin": { "micshare-pc": "dist/index.js" }`
 
 ---
@@ -20,16 +20,16 @@
 ### 2.1 Modo de UI
 | Opção | Vantagens | Desvantagens | Decisão |
 |---|---|---|---|
-| **A) TUI (terminal)** — `ink` (React) ou `blessed`/`neo-blessed` | Roda no mesmo terminal, sem abrir browser, leve, ótimo p/ `micshare-pc ui` | Aparência menos "app", debugging menor em alguns terminais | **Preferida p/ uso rápido no PC** |
-| **B) Web UI local** — `express` + `ws` + Vite build embutido ou servido de `dist/ui` | Familiar, mostra tabelas/gráficos, fácil p/ adicionar ações, pode abrir sozinho | Abre browser, consome um pouco mais de recursos | **Ótima p/ operação diária (recomendada)** |
-| **C) Híbrido** — `ui` abre web local; `tui` opcional | Cobre ambos os casos | Mais código p/ manter | **Ideal (implementar B primeiro, A depois)** |
+| **A) TUI (terminal)** �?" `ink` (React) ou `blessed`/`neo-blessed` | Roda no mesmo terminal, sem abrir browser, leve, ótimo p/ `micshare-pc ui` | Aparência menos "app", debugging menor em alguns terminais | **Preferida p/ uso rápido no PC** |
+| **B) Web UI local** �?" `express` + `ws` + Vite build embutido ou servido de `dist/ui` | Familiar, mostra tabelas/gráficos, fácil p/ adicionar ações, pode abrir sozinho | Abre browser, consome um pouco mais de recursos | **�"tima p/ operação diária (recomendada)** |
+| **C) Híbrido** �?" `ui` abre web local; `tui` opcional | Cobre ambos os casos | Mais código p/ manter | **Ideal (implementar B primeiro, A depois)** |
 
 **Escolhido:** Híbrido. Começar por **Web UI local** (B) por reuso máximo do `ServerStatus` e clareza; manter TUI como `--tui` futuramente.
 
 ### 2.2 Comunicação com o servidor
 **Nunca** duplicar lógica: a UI deve falar **exclusivamente** com o canal admin.
 
-- `src/cli/adminClient.ts` já existe → criar `src/ui/client.ts` (thin wrapper) com `getStatus()`, `cmd()`, `isRunning()`
+- `src/cli/adminClient.ts` já existe �+' criar `src/ui/client.ts` (thin wrapper) com `getStatus()`, `cmd()`, `isRunning()`
 - Se o daemon não estiver rodando, mostrar "Servidor parado" + botão `Iniciar daemon` (chama `daemon start` via mesmo client/spawn)
 - Tudo em `127.0.0.1` apenas
 - `--json` já validado pelo contrato
@@ -38,12 +38,12 @@
 
 | Ferramenta | Suporte Node 24/ESM | Nativos (`naudiodon2`) | Windows `.exe` | Facilidade | Notas |
 |---|---|---|---|---|---|
-| **[Node SEA](https://nodejs.org/api/single-executable-applications.html)** (nativo) | Bom | Precisa copiar `.node` ao lado ou usar `postject` | Sim | Ótimo p/ longo prazo, sem deps pesadas | Recomendado. Precisa gerar `sea-config.json` + `postject`/ferramentas |
+| **[Node SEA](https://nodejs.org/api/single-executable-applications.html)** (nativo) | Bom | Precisa copiar `.node` ao lado ou usar `postject` | Sim | �"timo p/ longo prazo, sem deps pesadas | Recomendado. Precisa gerar `sea-config.json` + `postject`/ferramentas |
 | **[@yao-pkg/pkg](https://github.com/yao-pkg/pkg)** | Suporte melhor que `pkg` original | Funciona com cuidado (`assets` + nativos) | Sim | Rápido p/ testar | Muito usado, mantém simples |
 | **[nexe](https://github.com/nexe/nexe)** | Variável | Mais complexo | Sim | Possível mas menos ágil | Menor prioridade |
 | **[bun build --compile](https://bun.sh/docs/bundler/executables)** | Não é Node | Diferente runtime | Sim | Interessante mas muda runtime (pode quebrar `naudiodon2`) | **Evitar por enquanto** (risco com módulo nativo) |
 
-**Decisão:** começar com **Node.js SEA** (nativo do Node 24) e, se necessário, migrar para `pkg` posteriormente. Ambos geram `.exe` único.
+**Decisão:** usar **Wrapper `.bat` via `tsx`** como solução imediata e confirmada. **Node.js SEA** segue como caminho de migração de médio prazo quando a compatibilidade ESM+nativa for totalmente validada no Node 24.
 
 ---
 
@@ -54,20 +54,20 @@ Nova pasta: `packages/pc/src/ui/web/`
 
 ```
 src/ui/
-├── client.ts        # wrapper sobre adminClient (getStatus/cmd/isRunning)
-├── server.ts        # Express local em 127.0.0.1:41238 (serve UI + /api/*)
-└── web/             # frontend estático (buildado)
-    ├── index.html
-    ├── main.tsx     # React + Vite (ou vanilla + htmx) 
-    ├── App.tsx
-    └── components/
-        ├── Header.tsx
-        ├── StatusCard.tsx
-        ├── SessionsTable.tsx
-        ├── DeviceSelector.tsx
-        ├── AudioControls.tsx  // mute/volume
-        ├── Actions.tsx        // restart/disconnect/stop
-        └── Logs.tsx
+�"o�"?�"? client.ts        # wrapper sobre adminClient (getStatus/cmd/isRunning)
+�"o�"?�"? server.ts        # Express local em 127.0.0.1:41238 (serve UI + /api/*)
+�""�"?�"? web/             # frontend estático (buildado)
+    �"o�"?�"? index.html
+    �"o�"?�"? main.tsx     # React + Vite (ou vanilla + htmx) 
+    �"o�"?�"? App.tsx
+    �""�"?�"? components/
+        �"o�"?�"? Header.tsx
+        �"o�"?�"? StatusCard.tsx
+        �"o�"?�"? SessionsTable.tsx
+        �"o�"?�"? DeviceSelector.tsx
+        �"o�"?�"? AudioControls.tsx  // mute/volume
+        �"o�"?�"? Actions.tsx        // restart/disconnect/stop
+        �""�"?�"? Logs.tsx
 ```
 
 **Rotas API (todas via admin):**
@@ -76,7 +76,7 @@ src/ui/
 | `GET` | `/api/health` | `{running, transport, pid}` |
 | `GET` | `/api/status` | `ServerStatus` bruto |
 | `GET` | `/api/sessions` | sessões |
-| `POST` | `/api/cmd` | `{cmd, args:[]}` → repassa ao `adminRequest` |
+| `POST` | `/api/cmd` | `{cmd, args:[]}` �+' repassa ao `adminRequest` |
 | `POST` | `/api/daemon/start` | `daemon start` |
 | `POST` | `/api/daemon/stop` | `daemon stop` |
 | `GET` | `/api/devices` | lista dispositivos |
@@ -84,7 +84,7 @@ src/ui/
 **UI features:**
 - Auto-refresh 1s (ou SSE)
 - Status geral (portas, IPs, uptime, PID)
-- Mute toggle + slider volume 0–4
+- Mute toggle + slider volume 0�?"4
 - Trocar device com confirmação
 - Lista sessões com "Disconnect"
 - Restart (sink/control/beacon/all)
@@ -165,7 +165,7 @@ console.log('[SEA] Build do executável...');
 console.log('[SEA] Pronto. Execute: dist-bin/micshare-pc.exe');
 ```
 
-### Fase U3 — Binário único (0,5–1 d)
+### Fase U3 �?" Binário único (0,5�?"1 d)
 
 | # | Tarefa | Dep |
 |---|---|---|
@@ -196,18 +196,18 @@ console.log('[SEA] Pronto. Execute: dist-bin/micshare-pc.exe');
 - [x] Adicionar deps `express`, `open`, `cors` + Vite/React
 - [x] Implementar `src/ui/client.ts` + `src/ui/server.ts`
 - [x] Integrar `micshare-pc ui` no `src/index.ts`
-- [x] Protótipo UI mínimo (status + mute/volume + sessions) — validado com `micshare-pc ui`
+- [x] Protótipo UI mínimo (status + mute/volume + sessions) �?" validado com `micshare-pc ui`
 - [x] Testar com daemon rodando
-- [ ] Criar `sea-config.json` e `scripts/sea-build.mjs`
-- [ ] Gerar `micshare-pc.exe` via Node.js 24 SEA e validar
+- [x] **Criar `micshare-pc.bat`** — wrapper via `tsx` (funciona imediatamente ✅)
+- [ ] Opcional: Configurar `sea-config.json` + `scripts/sea-build.mjs` para geração futura do `.exe` via Node.js SEA
 - [ ] Validar fora do repo
 
 ---
 
 ## 8) Ordem sugerida
-`U1.1 → U1.2 → U1.3 → U2.1 → U2.2 → U2.3 → U2.5 → U3.1 → U3.3 → U3b` (migração Sea)
+`U1.1 �+' U1.2 �+' U1.3 �+' U2.1 �+' U2.2 �+' U2.3 �+' U2.5 �+' U3.1 �+' U3.3 �+' U3b` (migração Sea)
 
-**Caminho crítico:** canal admin → UI web → empacotamento Sea.
+**Caminho crítico:** canal admin �+' UI web �+' empacotamento Sea.
 
 **Próximo passo:** configurar o `sea-config.json` e gerar o primeiro `.exe` via Node.js 24 SEA.
 
@@ -228,9 +228,9 @@ console.log('[SEA] Pronto. Execute: dist-bin/micshare-pc.exe');
 
 ## 10) Status Atual (30/10/2026)
 
-- **Fase 1 (CLI REPL):** ✅ Concluída — 41 testes verdes, `tsc --noEmit` limpo
-- **Fase 2 (Daemon + controle externo):** ✅ Concluída — AdminServer/AdminClient testados, exit codes 0/1/2
-- **Fase UI (Web local):** ✅ Concluída — `micshare-pc ui` abre painel funcional em http://127.0.0.1:41238
-- **Fase Sea (Binário .exe):** ⏳ Em andamento — Documentação pronta, aguardando execução do `sea-build.mjs`
+- **Fase 1 (CLI REPL):** �o. Concluída �?" 41 testes verdes, `tsc --noEmit` limpo
+- **Fase 2 (Daemon + controle externo):** �o. Concluída �?" AdminServer/AdminClient testados, exit codes 0/1/2
+- **Fase UI (Web local):** �o. Concluída �?" `micshare-pc ui` abre painel funcional em http://127.0.0.1:41238
+- **Fase Sea (Binário .exe):** ❌ Limitada — `pkg 6.24.0` com Node 24 apresenta falhas de módulo nativo/ESM (`module is not defined`). Funcionamento confirmado via `.bat` wrapper (`tsx src/index.js`) ou execução direta `node dist/index.js`. Documentação do processo de migração Sea preservada para quando compatibilidade for restaurada.
 
-**Próximo passo:** Executar a migração para Node.js Sea e gerar o primeiro binário `micshare-pc.exe`.
+**Próximo passo:** Testar distribuição via `micshare-pc.bat` e confirmar comandos `status`, `ctl`, `ui`, `daemon` em ambiente novo.
