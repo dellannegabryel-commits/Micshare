@@ -1,4 +1,4 @@
-import { Encoder, Decoder, ctl } from '@evan/opus';
+import { Encoder, Decoder } from '@evan/opus';
 
 export const OPUS_FRAME_MS = 20;
 export const OPUS_SAMPLE_RATE = 48000;
@@ -12,54 +12,47 @@ export interface OpusEncoderInstance {
 }
 
 export interface OpusDecoderInstance {
-  decode(packet: Uint8Array): Int16Array;
+  /** devolve PCM s16le cru (2 bytes por amostra) */
+  decode(packet: Uint8Array): Uint8Array;
   reset(): void;
 }
 
-export function createEncoder(frameMs: number = 20): OpusEncoderInstance {
-  const samplesPerFrame = (OPUS_SAMPLE_RATE * frameMs) / 1000;
-  const enc = new Encoder(OPUS_SAMPLE_RATE, OPUS_CHANNELS, ctl.application.voip);
-  enc.ctl(ctl.set.bitrate, 24000);       // 24 kbps
-  enc.ctl(ctl.set.complexity, 10);       // Max quality
-  enc.ctl(ctl.set.signal, ctl.signal.voice);
-  enc.ctl(ctl.set.vbr, 1);               // VBR enabled
-  enc.ctl(ctl.set.inband_fec, 1);        // FEC enabled
-  enc.ctl(ctl.set.dtx, 0);               // DTX disabled
-  console.log(`[opus] Encoder created: 24kbps VBR FEC ${frameMs}ms`);
+export function createEncoder(frameMs: number = OPUS_FRAME_MS): OpusEncoderInstance {
+  const enc = new Encoder({ channels: 1, sample_rate: 48000, application: 'voip' });
+  enc.bitrate = 24000;
+  enc.complexity = 10;
+  enc.signal = 'voice';
+  enc.vbr = true;
+  enc.inband_fec = true;
+  enc.dtx = false;
+  enc.expert_frame_duration = frameMs as 5 | 10 | 20 | 40 | 60 | 80 | 2.5 | 100 | 120;
+  console.log(`[opus] Encoder criado: 24kbps VBR FEC ${frameMs}ms`);
 
   return {
     encode(pcm: Int16Array): Uint8Array {
-      // pcm is Int16Array of samplesPerFrame samples
-      const out = enc.encode(pcm, samplesPerFrame);
-      return out;
+      return enc.encode(pcm);
     },
-    reset() {
-      enc.ctl(ctl.set.reset_state, 1);
-    }
+    reset(): void {
+      enc.reset();
+    },
   };
 }
 
-export function createDecoder(frameMs: number = 20): OpusDecoderInstance {
-  const samplesPerFrame = (OPUS_SAMPLE_RATE * frameMs) / 1000;
-  const dec = new Decoder(OPUS_SAMPLE_RATE, OPUS_CHANNELS);
-  console.log(`[opus] Decoder created ${frameMs}ms`);
+export function createDecoder(frameMs: number = OPUS_FRAME_MS): OpusDecoderInstance {
+  const dec = new Decoder({ channels: 1, sample_rate: 48000 });
+  console.log(`[opus] Decoder criado ${frameMs}ms`);
 
   return {
-    decode(packet: Uint8Array): Int16Array {
-      const out = dec.decode(packet, samplesPerFrame);
-      return new Int16Array(out.buffer, out.byteOffset, out.length);
+    decode(packet: Uint8Array): Uint8Array {
+      return dec.decode(packet);
     },
-    reset() {
-      dec.ctl(ctl.set.reset_state, 1);
-    }
+    reset(): void {
+      dec.reset();
+    },
   };
 }
 
-// PLC: Generate concealment frame on loss
-export function decodeWithPLC(decoder: OpusDecoderInstance, packet: Uint8Array | null): Int16Array {
-  if (packet === null || packet.length === 0) {
-    // Opus decoder handles PLC when passed null/empty
-    return decoder.decode(new Uint8Array(0));
-  }
-  return decoder.decode(packet);
+/** PLC: pacote vazio faz o decoder do Opus gerar o quadro de ocultação. */
+export function decodeWithPLC(decoder: OpusDecoderInstance, packet: Uint8Array | null): Uint8Array {
+  return decoder.decode(packet ?? new Uint8Array(0));
 }

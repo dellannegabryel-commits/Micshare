@@ -209,6 +209,8 @@ Não mexer em `packages/protocol`: o protocolo admin é **local e privado**, nã
 
 **DoD:** com o servidor rodando, `status`, `clients`, `mute on/off`, `volume 2`, `disconnect all` e `stop` funcionam; mutar o áudio silencia de fato a saída do VB-Cable; `npm --prefix packages/pc run test` verde.
 
+**Status (30/10/2026): concluída.** C1.1–C1.8 implementadas; `tsc --noEmit` limpo e 41 testes verdes. O smoke test automatizado (portas 42235/42236/42234, `fakeClient --hello`) validou `status`, `stats`, `clients`, `mute on/off`, `volume`, `devices`, `disconnect all`, `restart --sink` e `stop` (exit 0). O device `CABLE Input` não pôde ser reaberto porque um servidor antigo elevado (PID 11360) o mantém ocupado — o teste usou `Mapeador de som`; a validação auditiva com VB-Cable fica pendente de encerrar aquele processo. `integration.test.ts` continua sendo teste manual (não roda no `npm test`).
+
 ### Fase 2 — Daemon + controle externo (1 d)
 
 | # | Tarefa | Dep |
@@ -316,4 +318,4 @@ Caminho crítico: **C1.1 → C1.2 → C1.6 → C2.1 → C2.2 → C3.6**.
 
 | Data | Fase | Resultado | Notas |
 |---|---|---|---|
-| — | — | — | — |
+| 30/10/2026 | F1 | concluída | `tsc --noEmit` limpo, 41 testes verdes, smoke 14/14 (portas alternativas). Falta validação auditiva no VB-Cable (device ocupado por PID 11360). |

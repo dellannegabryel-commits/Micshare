@@ -18,7 +18,31 @@ celular (React Native) ──UDP/Wi-Fi──> PC (Node + TypeScript) ──> cab
 
 ## Estado
 
-Fase 0 (fundação) concluída: documentação e board prontos. Sprint 01 em planejamento — nenhum código escrito ainda.
+PoC de áudio (Sprint 01) funcionando: servidor UDP + jitter buffer + saída PortAudio/VB-Cable, controle WebSocket e beacon de descoberta. A CLI de controle do PC está na Fase 1 (REPL in-process); as Fases 2 (daemon/controle externo) e 3 (monitor/pareamento) estão descritas em [`docs/plano-cli.md`](docs/plano-cli.md).
+
+## CLI do PC
+
+```bash
+npm --prefix packages/pc run dev                 # sobe o servidor e abre o prompt
+npm --prefix packages/pc run dev -- --device "CABLE Input" --verbose
+npm --prefix packages/pc run dev -- --no-repl    # sem prompt (serviço/terminal separado)
+npm --prefix packages/pc run dev -- devices      # lista as saídas de áudio
+```
+
+No prompt (`micshare>`):
+
+| Comando | Efeito |
+|---|---|
+| `status` / `stats` / `clients` | estado do servidor, métricas de 1 s e sessões conectadas |
+| `devices` / `device <substr>` | lista e troca a saída de áudio em runtime (com rollback) |
+| `mute [on\|off\|toggle]` | silencia de fato a saída (o jitter continua drenando) |
+| `volume <0..4 \| +0.1 \| -0.1>` | ganho aplicado no PCM, com clamp em 16 bits |
+| `disconnect [<id>\|all]` | envia `bye` e fecha a sessão do celular |
+| `restart [--sink\|--control\|--beacon\|--all]` | reinicia partes do servidor sem matar o processo |
+| `pair [on\|off\|rotate]` / `beacon [on\|off\|interval <ms>]` | pareamento e descoberta |
+| `help` / `stop` | ajuda e shutdown gracioso |
+
+Qualquer comando aceita `--json` (`status --json`) para script. Testes: `npm --prefix packages/pc test`.
 
 ## Stack
 

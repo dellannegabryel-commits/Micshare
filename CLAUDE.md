@@ -22,8 +22,9 @@ Micshare/
 │   ├── protocol/                 # Shared binary protocol (header, encode/decode, validation, tests)
 │   │   ├── src/{audioFrame.ts,ctrl.ts,constants.ts,index.ts}
 │   │   └── dist/                 # Compiled output + tests
-│   ├── pc/                       # Legacy PC server (Node.js/TypeScript) — deprecated
-│   │   ├── src/{index.ts,audioServer.ts,control.ts,discovery.ts,jitterBuffer.ts,sink.ts,metrics.ts,fakeClient.ts}
+│   ├── pc/                       # Legacy PC server (Node.js/TypeScript) — CLI de controle (Fase 1)
+│   │   ├── src/{index.ts,audioServer.ts,control.ts,discovery.ts,jitterBuffer.ts,sink.ts,metrics.ts,serverState.ts,fakeClient.ts}
+│   │   ├── src/cli/{commands.ts,parse.ts,format.ts,repl.ts}   # registry único de comandos + REPL
 │   │   └── dist/
 │   └── pc-ui/                    # PC server UI (Rust + Tauri 3) — main binary
 │       ├── src/                  # React 18 + TypeScript + Vite frontend
@@ -84,14 +85,19 @@ npm --prefix packages/pc-ui run tauri:build # Build native installer (MSI/NSIS)
 cd packages/pc-ui/src-tauri && cargo run --release  # Run Rust backend directly
 ```
 
-### Legacy PC Server (Node.js - packages/pc, deprecated)
+### Legacy PC Server (Node.js - packages/pc)
 ```bash
-npm --prefix packages/pc run dev -- --list-devices   # List audio output devices
+npm --prefix packages/pc run dev                    # sobe o servidor + prompt (micshare>)
+npm --prefix packages/pc run dev -- devices         # List audio output devices
 npm --prefix packages/pc run dev -- --device "CABLE" --verbose  # Run PC server
-npm --prefix packages/pc run dev -- --sink=ffplay    # Force ffplay sink
-npm --prefix packages/pc run build                   # Build PC package
-npm --prefix packages/pc run test                    # Run PC tests (node --test)
+npm --prefix packages/pc run dev -- --no-repl       # servidor sem prompt
+npm --prefix packages/pc run build                  # Build PC package
+npm --prefix packages/pc run test                   # Run PC tests (tsx --test)
 ```
+
+No prompt: `status`, `stats`, `clients`, `devices`, `device <substr>`, `mute`, `volume`,
+`disconnect`, `restart`, `pair`, `beacon`, `help`, `stop`. Qualquer um aceita `--json`.
+Plano completo: `docs/plano-cli.md`.
 
 ### Mobile (Expo)
 ```bash
@@ -125,7 +131,7 @@ MICSHARE_DROP_PCT=N      # Simulate N% packet loss on PC receiver (for testing)
 2. **Run tests**: `npm --prefix packages/protocol run test` and `npm --prefix packages/pc run test` and `cd packages/pc-ui/src-tauri && cargo test`
 3. **PC Server (Tauri)**: Run with `npm --prefix packages/pc-ui run tauri:dev` or `cargo run --release -- --verbose` to see real-time stats (fps, loss%, buffer ms, gaps, underruns, fast-forwards)
 4. **Mobile**: Requires physical device for audio capture (Expo Go doesn't support `react-native-live-audio-stream`; use dev client after `prebuild`)
-5. **Fake client for PC testing**: `node packages/pc/dist/fakeClient.js` (sends synthetic frames) or build the fake client in Rust
+5. **Fake client for PC testing**: `npx --prefix packages/pc tsx packages/pc/src/fakeClient.ts --hello --frames 500` (envia tom de 440 Hz e abre sessão WS; flags `--host/--port/--control-port/--drop/--codec/--token`)
 
 ## Important Implementation Details
 
@@ -185,5 +191,6 @@ MICSHARE_DROP_PCT=N      # Simulate N% packet loss on PC receiver (for testing)
 - Roadmap & gates: `docs/roadmap.md`
 - Sprint 1 plan: `docs/sprint-01.md`
 - Sprint 1 results: `docs/sprint-01-resultado.md`
+- CLI plan: `docs/plano-cli.md`
 - Latency methodology: `docs/latencia.md`
 - Original briefing: `documenta_o_de_arquitetura_microfone_p2p.md`

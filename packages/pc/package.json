@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "test": "node --test",
+    "test": "tsx --test src/jitterBuffer.test.ts src/cli/parse.test.ts src/cli/commands.test.ts",
     "install-vbcable": "powershell -ExecutionPolicy Bypass -File install-vbcable.ps1"
   },
   "dependencies": {
