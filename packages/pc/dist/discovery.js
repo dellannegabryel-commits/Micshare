@@ -31,14 +31,22 @@ export class BeaconSender {
     interval = null;
     bound = false;
     broadcastAddresses = ['255.255.255.255'];
+    intervalMs;
+    beaconPort;
+    pairingEnabled;
+    pairingCode;
     constructor(config) {
         this.config = config;
+        this.intervalMs = config.intervalMs ?? 1000;
+        this.beaconPort = config.beaconPort ?? BEACON_PORT;
+        this.pairingEnabled = config.pairingEnabled ?? false;
+        this.pairingCode = config.pairingCode ?? '';
         this.discoverBroadcastAddresses();
     }
     discoverBroadcastAddresses() {
         try {
             const interfaces = networkInterfaces();
-            for (const [name, ifaces] of Object.entries(interfaces)) {
+            for (const ifaces of Object.values(interfaces)) {
                 if (!ifaces)
                     continue;
                 for (const iface of ifaces) {
@@ -62,19 +70,58 @@ export class BeaconSender {
         if (this.bound)
             return;
         this.socket = createSocket('udp4');
-        this.socket.on('error', (err) => console.error('[beacon] socket error:', err));
-        // Bind to 0.0.0.0 to send on all interfaces
-        this.socket.bind({ port: BEACON_PORT, address: '0.0.0.0' }, () => {
+        this.socket.on('error', (err) => console.error('[beacon] socket error:', err.message));
+        this.socket.bind({ port: this.beaconPort, address: '0.0.0.0' }, () => {
+            if (!this.socket)
+                return;
             this.socket.setBroadcast(true);
             this.bound = true;
             this.send();
-            this.interval = setInterval(() => this.send(), 1000);
+            this.restartTimer();
             const localAddr = this.socket.address();
-            console.log(`[beacon] bound to ${localAddr.address}:${localAddr.port}, broadcasting to ${this.broadcastAddresses.length} addresses on port ${BEACON_PORT}`);
+            console.log(`[beacon] bound to ${localAddr.address}:${localAddr.port}, broadcasting to ${this.broadcastAddresses.length} addresses on port ${this.beaconPort}`);
         });
     }
+    /** Liga/desliga o beacon sem recriar o socket. */
+    setEnabled(enabled) {
+        if (enabled && !this.interval) {
+            this.restartTimer();
+            this.send();
+        }
+        else if (!enabled && this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
+        }
+    }
+    setIntervalMs(ms) {
+        this.intervalMs = Math.max(100, Math.round(ms));
+        if (this.interval)
+            this.restartTimer();
+    }
+    setPairing(enabled, code) {
+        this.pairingEnabled = enabled;
+        this.pairingCode = code;
+        this.send();
+    }
+    isRunning() {
+        return this.bound && this.interval !== null;
+    }
+    getIntervalMs() {
+        return this.intervalMs;
+    }
+    getBeaconPort() {
+        return this.beaconPort;
+    }
+    isPairingEnabled() {
+        return this.pairingEnabled;
+    }
+    restartTimer() {
+        if (this.interval)
+            clearInterval(this.interval);
+        this.interval = setInterval(() => this.send(), this.intervalMs);
+    }
     send() {
-        if (!this.socket)
+        if (!this.socket || !this.bound)
             return;
         const msg = JSON.stringify({
             app: 'micshare',
@@ -82,28 +129,36 @@ export class BeaconSender {
             name: this.config.name,
             audioPort: this.config.audioPort,
             ctrlPort: this.config.ctrlPort,
-            pair: false, // MVP: no pairing required
-            code: '', // empty code for MVP (no pairing)
+            pair: this.pairingEnabled,
+            code: this.pairingEnabled ? this.pairingCode : '',
         });
         const buf = Buffer.from(msg);
         try {
             for (const addr of this.broadcastAddresses) {
-                this.socket.send(buf, 0, buf.length, BEACON_PORT, addr);
+                this.socket.send(buf, 0, buf.length, this.beaconPort, addr);
             }
         }
         catch (e) {
-            console.error('[beacon] send error:', e);
+            console.error('[beacon] send error:', e.message);
         }
     }
-    stop() {
+    async stop() {
         if (this.interval) {
             clearInterval(this.interval);
             this.interval = null;
         }
-        if (this.socket) {
-            this.socket.close();
-            this.socket = null;
-        }
+        const socket = this.socket;
+        this.socket = null;
         this.bound = false;
+        if (!socket)
+            return;
+        await new Promise((resolve) => {
+            try {
+                socket.close(() => resolve());
+            }
+            catch {
+                resolve();
+            }
+        });
     }
 }

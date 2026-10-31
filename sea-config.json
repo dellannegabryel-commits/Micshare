@@ -1,0 +1,12 @@
+{
+  "target": "node24-win-x64",
+  "main": "dist/index.js",
+  "name": "micshare-pc",
+  "strict": true,
+  "assets": [
+    "dist/**/*",
+    "src/ui/web/dist/**/*",
+    "node_modules/naudiodon2/build/Release/*.node",
+    "node_modules/ws/**"
+  ]
+}

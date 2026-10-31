@@ -3,23 +3,20 @@ import org.gradle.api.GradleException
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-android")
-    id("kotlin-parcelize")
-    id("kotlin-kapt")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
-    namespace = "com.micshare.app"
-    compileSdk = 34
+    namespace = "com.micshare"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.micshare.app"
+        applicationId = "com.micshare"
         minSdk = 23
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
 
-        // Set the main activity for Jetpack Compose
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -30,8 +27,8 @@ android {
         create("release") {
             val keystorePath = project.findProperty("android.keystore.path") as String? ?: System.getenv("ANDROID_KEYSTORE_PATH")
             val keystorePassword = project.findProperty("android.keystore.password") as String? ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            val keyAlias = project.findProperty("android.key.alias") as String? ?: System.getenv("ANDROID_KEY_ALIAS")
-            val keyPassword = project.findProperty("android.key.password") as String? ?: System.getenv("ANDROID_KEY_PASSWORD")
+            val keyAlias = project.findProperty("android.keystore.alias") as String? ?: System.getenv("ANDROID_KEY_ALIAS")
+            val keyPassword = project.findProperty("android.keystore.password") as String? ?: System.getenv("ANDROID_KEY_PASSWORD")
 
             if (keystorePath != null && keystorePassword != null && keyAlias != null && keyPassword != null) {
                 storeFile = file(keystorePath)
@@ -70,14 +67,19 @@ android {
 
     kotlinOptions {
         jvmTarget = "11"
-        freeCompilerArgs += listOf("-Xno-inline")
+    }
+
+    buildFeatures {
+        compose = true
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.6.0"
+        // Compose Compiler 1.5.14 é o par oficial do Kotlin 1.9.24
+        // (1.5.15 exige Kotlin 1.9.25).
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
-    packagingOptions {
+    packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -88,46 +90,36 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.08.00")
     val material3 = "androidx.compose.material3:material3"
     val materialIcons = "androidx.compose.material:material-icons-extended"
-    val materialComponents = "com.google.android.material:material:1.12.0"
     val activityCompose = "androidx.activity:activity-compose:1.9.1"
     val viewModelCompose = "androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2"
     val lifecycleRuntimeCompose = "androidx.lifecycle:lifecycle-runtime-compose:2.8.2"
     val coreKtx = "androidx.core:core-ktx:1.13.1"
     val coroutines = "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
-    val okhttp = "com.squareup.okhttp3:okhttp:4.12.0"
-    val okio = "com.squareup.okio:okio:3.9.0"
-    val room = "androidx.room:room-runtime:2.6.1"
-    val roomKtx = "androidx.room:room-ktx:2.6.1"
-    val roomCompiler = "androidx.room:room-compiler:2.6.1"
+    val serialization = "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3"
     val datastore = "androidx.datastore:datastore-preferences:1.1.1"
-    val permissions = "androidx.activity:activity-ktx:1.9.1"
+
+    // Ktor: cliente WebSocket do canal de controle (mesmo papel do
+    // tokio-tungstenite no servidor Rust).
+    val ktor = "2.3.12"
 
     implementation(composeBom)
     implementation(material3)
     implementation(materialIcons)
-    implementation(materialComponents)
     implementation(activityCompose)
     implementation(viewModelCompose)
     implementation(lifecycleRuntimeCompose)
     implementation(coreKtx)
     implementation(coroutines)
-    implementation(okhttp)
-    implementation(okio)
-    implementation(room)
-    implementation(roomKtx)
-    kapt(roomCompiler)
+    implementation(serialization)
     implementation(datastore)
-    implementation(permissions)
+
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-text")
     implementation("androidx.compose.ui:ui-text-android")
 
-    // Audio capture for microphone
-    implementation("androidx.media3:media3-common:1.4.1")
-    implementation("androidx.media3:media3-extractor:1.4.1")
-
-    // Network
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("io.ktor:ktor-client-core:$ktor")
+    implementation("io.ktor:ktor-client-cio:$ktor")
+    implementation("io.ktor:ktor-client-websockets:$ktor")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

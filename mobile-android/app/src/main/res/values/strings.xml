@@ -1,15 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Micshare</string>
-    <string name="discover_servers">Descobrir servidores</string>
-    <string name="pairing_code_hint">Código de 6 dígitos</string>
-    <string name="connect">Conectar</string>
-    <string name="start_streaming">Iniciar streaming</string>
-    <string name="stop_streaming">Parar streaming</string>
-    <string name="disconnect">Desconectar</string>
-    <string name="audio_level">Nível de áudio</string>
-    <string name="searching">Procurando...</string>
-    <string name="no_servers_found">Nenhum servidor encontrado</string>
-    <string name="pairing_failed">Emparelhamento falhou</string>
-    <string name="connected">Conectado</string>
-    <string name="streaming">Transmitindo</string>
+    <string name="notification_channel_name">Streaming de áudio</string>
+    <string name="notification_streaming_title">Micshare está transmitindo</string>
+    <string name="notification_streaming_text">Enviando microfone para o PC</string>
+    <string name="permission_microphone_required">Permissão de microfone necessária para transmitir o áudio.</string>
 </resources>

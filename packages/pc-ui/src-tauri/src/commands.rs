@@ -3,7 +3,9 @@
 use tauri::State;
 
 use crate::config::ServerConfig;
+use crate::control::SessionInfo;
 use crate::discovery::beacon::BeaconStatus;
+use crate::server::ServerStats;
 use crate::state::AppState;
 
 /// Retorna a configuração atual do servidor.
@@ -22,20 +24,32 @@ pub async fn save_server_config(
     Ok(())
 }
 
-/// Inicia o beacon de descoberta.
+/// Inicia o servidor (descoberta + controle + áudio).
 #[tauri::command]
-pub async fn start_discovery(state: State<'_, AppState>) -> Result<BeaconStatus, String> {
-    state.start_discovery().await
+pub async fn start_server(state: State<'_, AppState>) -> Result<(), String> {
+    state.start_server().await
 }
 
-/// Encerra o beacon de descoberta.
+/// Encerra o servidor.
 #[tauri::command]
-pub async fn stop_discovery(state: State<'_, AppState>) -> Result<(), String> {
-    state.stop_discovery().await;
+pub async fn stop_server(state: State<'_, AppState>) -> Result<(), String> {
+    state.stop_server().await;
     Ok(())
 }
 
-/// Retorna o estado do beacon de descoberta.
+/// Estatísticas agregadas do servidor.
+#[tauri::command]
+pub async fn get_server_stats(state: State<'_, AppState>) -> Result<ServerStats, String> {
+    Ok(state.stats().await)
+}
+
+/// Sessões de controle ativas.
+#[tauri::command]
+pub async fn get_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
+    Ok(state.sessions().await)
+}
+
+/// Estado do beacon de descoberta.
 #[tauri::command]
 pub async fn get_discovery_status(
     state: State<'_, AppState>,

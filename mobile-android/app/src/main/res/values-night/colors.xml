@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="micshare_background">#171717</color>
+    <color name="micshare_surface">#272727</color>
+    <color name="micshare_on_background">#FAFAFA</color>
+    <color name="micshare_on_surface">#FAFAFA</color>
+</resources>

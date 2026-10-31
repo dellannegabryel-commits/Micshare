@@ -1,18 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base application theme. -->
-    <style name="Theme.Micshare" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Primary brand color. -->
-        <item name="colorPrimary">@color/micshare_green</item>
-        <item name="colorPrimaryVariant">@color/micshare_green_dark</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <!-- Secondary brand color. -->
-        <item name="colorSecondary">@color/micshare_green_light</item>
-        <item name="colorSecondaryVariant">@color/micshare_green_dark</item>
-        <item name="colorOnSecondary">@color/black</item>
-        <!-- Status bar color. -->
+    <!--
+        Tema base do app. As cores reais são aplicadas pelo Compose
+        (com.micshare.ui.theme.MicshareTheme); aqui fica apenas a moldura
+        da janela, evitando o "flash" antes do Compose desenhar.
+    -->
+    <style name="Theme.Micshare" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@color/micshare_background</item>
         <item name="android:navigationBarColor">@color/micshare_background</item>
-        <!-- Customize your theme here. -->
         <item name="android:windowBackground">@color/micshare_background</item>
     </style>
 </resources>

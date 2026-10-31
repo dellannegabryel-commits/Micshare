@@ -1,6 +1,12 @@
-//! Contratos compartilhados: portas, constantes e tipos do protocolo binário.
+//! Contratos compartilhados: portas, constantes e tipos do protocolo.
+
+pub mod audio;
+pub mod ctrl;
 
 use serde::{Deserialize, Serialize};
+
+pub use audio::{AudioCodec, AudioFrameHeader, FrameError};
+pub use ctrl::{CODEC_OPUS, CODEC_PCM16, CTRL_VERSION, CtrlMessage};
 
 /// Porta do beacon UDP de descoberta (broadcast na rede local).
 pub const DISCOVERY_PORT: u16 = 41234;
@@ -15,7 +21,7 @@ pub const CONTROL_PORT: u16 = 41236;
 pub const BIND_ADDR: &str = "0.0.0.0";
 
 /// Tamanho fixo do cabeçalho binário Big-Endian (16 bytes).
-pub const HEADER_LEN: usize = 16;
+pub use audio::HEADER_LEN;
 
 /// Identificador da aplicação no beacon (descoberta).
 pub const APP_ID: &str = "micshare";

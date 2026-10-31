@@ -5,13 +5,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::ServerConfig;
-use crate::discovery::{BeaconConfig, BeaconStatus, Discovery};
+use crate::control::SessionInfo;
+use crate::discovery::BeaconStatus;
+use crate::server::{Server, ServerStats};
 
 /// Estado gerenciado pela aplicação Tauri.
 #[derive(Default)]
 pub struct AppState {
     config: RwLock<ServerConfig>,
-    discovery: RwLock<Option<Arc<Discovery>>>,
+    server: RwLock<Option<Arc<Server>>>,
 }
 
 impl AppState {
@@ -20,7 +22,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             config: RwLock::new(ServerConfig::default()),
-            discovery: RwLock::new(None),
+            server: RwLock::new(None),
         }
     }
 
@@ -34,52 +36,69 @@ impl AppState {
         *self.config.write().await = config;
     }
 
-    /// Inicia (ou reinicia) o beacon de descoberta.
-    pub async fn start_discovery(&self) -> Result<BeaconStatus, String> {
-        let config = self.config().await;
-
-        // Derruba o emitter anterior antes de bindar o socket de novo.
-        if let Some(previous) = self.discovery.write().await.take() {
+    /// Inicia o servidor (descoberta + controle + áudio).
+    pub async fn start_server(&self) -> Result<(), String> {
+        // Derruba o servidor anterior antes de bindar as portas de novo.
+        if let Some(previous) = self.server.write().await.take() {
             previous.stop();
         }
 
-        let name = config.name.clone().unwrap_or_else(default_host_name);
+        let config = self.config().await;
+        let server = Server::start(config)
+            .await
+            .map_err(|err| format!("falha ao iniciar o servidor: {err}"))?;
 
-        let discovery = Discovery::start(BeaconConfig {
-            name,
-            audio_port: config.audio_port,
-            ctrl_port: config.ctrl_port,
-            pairing_code: String::new(),
-        })
-        .await
-        .map_err(|err| format!("falha ao iniciar discovery: {err}"))?;
-
-        let status = discovery.status();
-        *self.discovery.write().await = Some(Arc::new(discovery));
-        Ok(status)
+        *self.server.write().await = Some(server);
+        Ok(())
     }
 
-    /// Encerra o beacon de descoberta.
-    pub async fn stop_discovery(&self) {
-        if let Some(discovery) = self.discovery.write().await.take() {
-            discovery.stop();
+    /// Encerra o servidor.
+    pub async fn stop_server(&self) {
+        if let Some(server) = self.server.write().await.take() {
+            server.stop();
         }
     }
 
-    /// Estado do beacon, se estiver rodando.
+    /// `true` se o servidor está rodando.
+    pub async fn is_running(&self) -> bool {
+        self.server.read().await.is_some()
+    }
+
+    /// Estatísticas agregadas do servidor.
+    pub async fn stats(&self) -> ServerStats {
+        match self.server.read().await.as_ref() {
+            Some(server) => server.stats().await,
+            None => ServerStats::default(),
+        }
+    }
+
+    /// Sessões de controle ativas.
+    pub async fn sessions(&self) -> Vec<SessionInfo> {
+        match self.server.read().await.as_ref() {
+            Some(server) => server.sessions().await,
+            None => Vec::new(),
+        }
+    }
+
+    /// Estado do beacon de descoberta, se estiver rodando.
     pub async fn discovery_status(&self) -> Option<BeaconStatus> {
-        self.discovery.read().await.as_ref().map(|d| d.status())
+        self.server
+            .read()
+            .await
+            .as_ref()
+            .map(|server| server.discovery().status())
     }
 
     /// Habilita ou desabilita o anúncio do beacon.
     pub async fn set_discovery_enabled(&self, enabled: bool) {
-        if let Some(discovery) = self.discovery.read().await.as_ref() {
-            discovery.set_enabled(enabled);
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.discovery().set_enabled(enabled);
         }
     }
 }
 
 /// Hostname do PC, usado como nome padrão no beacon.
+#[must_use]
 pub fn default_host_name() -> String {
     hostname::get()
         .unwrap_or_default()
