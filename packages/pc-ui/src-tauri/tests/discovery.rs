@@ -33,13 +33,10 @@ async fn beacon_chega_no_destino_configurado() {
     sender.announce_once().await.unwrap();
 
     let mut buf = [0_u8; 512];
-    let (len, from) = tokio::time::timeout(
-        Duration::from_secs(2),
-        receiver.recv_from(&mut buf),
-    )
-    .await
-    .expect("beacon não chegou")
-    .unwrap();
+    let (len, from) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+        .await
+        .expect("beacon não chegou")
+        .unwrap();
 
     assert_eq!(from.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
 
@@ -54,13 +51,9 @@ async fn beacon_chega_no_destino_configurado() {
 #[tokio::test]
 async fn probe_unicast_recebe_o_beacon() {
     let sender = std::sync::Arc::new(
-        BeaconSender::bind_on(
-            config(),
-            (IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-            Vec::new(),
-        )
-        .await
-        .unwrap(),
+        BeaconSender::bind_on(config(), (IpAddr::V4(Ipv4Addr::LOCALHOST), 0), Vec::new())
+            .await
+            .unwrap(),
     );
     let sender_addr = sender.local_addr().unwrap();
 
@@ -102,8 +95,12 @@ async fn beacon_desabilitado_nao_e_enviado() {
     sender.announce_once().await.unwrap();
 
     let mut buf = [0_u8; 512];
-    let result = tokio::time::timeout(Duration::from_millis(300), receiver.recv_from(&mut buf)).await;
-    assert!(result.is_err(), "beacon foi enviado mesmo com o beacon desabilitado");
+    let result =
+        tokio::time::timeout(Duration::from_millis(300), receiver.recv_from(&mut buf)).await;
+    assert!(
+        result.is_err(),
+        "beacon foi enviado mesmo com o beacon desabilitado"
+    );
 }
 
 #[tokio::test]

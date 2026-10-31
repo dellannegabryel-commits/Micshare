@@ -37,7 +37,9 @@ pub async fn stop_discovery(state: State<'_, AppState>) -> Result<(), String> {
 
 /// Retorna o estado do beacon de descoberta.
 #[tauri::command]
-pub async fn get_discovery_status(state: State<'_, AppState>) -> Result<Option<BeaconStatus>, String> {
+pub async fn get_discovery_status(
+    state: State<'_, AppState>,
+) -> Result<Option<BeaconStatus>, String> {
     Ok(state.discovery_status().await)
 }
 

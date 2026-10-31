@@ -90,7 +90,10 @@ mod tests {
     fn beacon_cabe_no_limite_de_200_bytes() {
         let beacon = Beacon::new("DESKTOP-GABRY", AUDIO_PORT, CONTROL_PORT, None);
         let json = serde_json::to_string(&beacon).unwrap();
-        assert!(json.len() <= BEACON_MAX_BYTES, "beacon excedeu o limite: {json}");
+        assert!(
+            json.len() <= BEACON_MAX_BYTES,
+            "beacon excedeu o limite: {json}"
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::watch;
 
 use crate::discovery::targets::broadcast_targets;
-use crate::protocol::{Beacon, DiscoveryRequest, AUDIO_PORT, CONTROL_PORT, DISCOVERY_PORT};
+use crate::protocol::{AUDIO_PORT, Beacon, CONTROL_PORT, DISCOVERY_PORT, DiscoveryRequest};
 
 /// Intervalo entre beacons (1 Hz).
 pub const BEACON_INTERVAL: Duration = Duration::from_secs(1);

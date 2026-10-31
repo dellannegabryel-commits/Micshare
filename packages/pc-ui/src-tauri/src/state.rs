@@ -43,10 +43,7 @@ impl AppState {
             previous.stop();
         }
 
-        let name = config
-            .name
-            .clone()
-            .unwrap_or_else(default_host_name);
+        let name = config.name.clone().unwrap_or_else(default_host_name);
 
         let discovery = Discovery::start(BeaconConfig {
             name,

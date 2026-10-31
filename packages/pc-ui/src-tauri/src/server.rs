@@ -11,9 +11,15 @@ pub async fn start(app: AppHandle) -> Result<(), DynError> {
     // Descoberta: beacon UDP em 41234, controlado pelo estado compartilhado.
     let discovery = {
         let state = app.state::<AppState>();
-        state.start_discovery().await.map_err(|err| -> DynError { err.into() })?
+        state
+            .start_discovery()
+            .await
+            .map_err(|err| -> DynError { err.into() })?
     };
-    eprintln!("[servidor] discovery ativo ({} beacons enviados)", discovery.sent);
+    eprintln!(
+        "[servidor] discovery ativo ({} beacons enviados)",
+        discovery.sent
+    );
 
     let control = control::run(app.clone());
     let audio = audio::run(app);

@@ -79,7 +79,10 @@ mod tests {
     fn targets_sempre_incluem_o_broadcast_global() {
         let targets = broadcast_targets(41234);
         let global = SocketAddr::from((Ipv4Addr::BROADCAST, 41234));
-        assert!(targets.contains(&global), "broadcast global ausente: {targets:?}");
+        assert!(
+            targets.contains(&global),
+            "broadcast global ausente: {targets:?}"
+        );
     }
 
     #[test]
@@ -87,6 +90,10 @@ mod tests {
         let targets = broadcast_targets(41234);
         let mut unicos = targets.clone();
         unicos.dedup();
-        assert_eq!(targets.len(), unicos.len(), "targets duplicados: {targets:?}");
+        assert_eq!(
+            targets.len(),
+            unicos.len(),
+            "targets duplicados: {targets:?}"
+        );
     }
 }
