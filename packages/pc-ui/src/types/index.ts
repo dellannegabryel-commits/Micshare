@@ -36,3 +36,9 @@ export interface LogEntry {
   level: 'info' | 'warn' | 'error';
   message: string;
 }
+
+export interface DiscoveryStatus {
+  sent: number;
+  probesAnswered: number;
+  enabled: boolean;
+}

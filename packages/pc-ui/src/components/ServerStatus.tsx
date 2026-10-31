@@ -1,4 +1,5 @@
 import { Cpu, Loader2 } from 'lucide-react';
+import { DiscoveryStatus } from '../types';
 
 interface ServerStatusProps {
   running: boolean;
@@ -7,9 +8,10 @@ interface ServerStatusProps {
   onStart: () => void;
   onStop: () => void;
   loading: boolean;
+  discovery: DiscoveryStatus | null;
 }
 
-export function ServerStatus({ running, sessions, deviceName, onStart, onStop, loading }: ServerStatusProps) {
+export function ServerStatus({ running, sessions, deviceName, onStart, onStop, loading, discovery }: ServerStatusProps) {
   return (
     <div className="glass-panel-elevated p-6">
       <div className="flex items-center justify-between mb-4">
@@ -33,8 +35,15 @@ export function ServerStatus({ running, sessions, deviceName, onStart, onStop, l
           <div className="text-xs text-neutral-500 dark:text-neutral-400">Conexão</div>
         </div>
         <div className="stat-pill text-center">
-          <div className="text-2xl font-bold text-neutral-900 dark:text-neutral-50">{running ? '✓' : '✗'}</div>
+          <div className="text-2xl font-bold text-neutral-900 dark:text-neutral-50">
+            {discovery?.enabled ? '✓' : '✗'}
+          </div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">Beacon</div>
+          {discovery && (
+            <div className="text-[10px] text-neutral-400 dark:text-neutral-500 mt-0.5">
+              {discovery.sent} enviados
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { ServerConfig, ServerStats, AudioDevice, LogEntry } from '../types';
+import { ServerConfig, ServerStats, AudioDevice, LogEntry, DiscoveryStatus } from '../types';
 
 export function useServer() {
   const [config, setConfig] = useState<ServerConfig>({
@@ -33,11 +33,13 @@ export function useServer() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
 
   // Load initial config and devices
   useEffect(() => {
     loadConfig();
     loadDevices();
+    loadDiscovery();
   }, []);
 
   // Listen for stats updates from backend
@@ -88,6 +90,52 @@ export function useServer() {
       setDevices(deviceNames.map(name => ({ name, isDefault: false })));
     } catch (e) {
       console.error('Failed to load devices:', e);
+    }
+  }, []);
+
+  const loadDiscovery = useCallback(async () => {
+    try {
+      const status = await invoke<DiscoveryStatus | null>('get_discovery_status');
+      setDiscovery(status);
+    } catch (e) {
+      console.error('Failed to load discovery status:', e);
+    }
+  }, []);
+
+  const startDiscovery = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const status = await invoke<DiscoveryStatus>('start_discovery');
+      setDiscovery(status);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start discovery');
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const stopDiscovery = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await invoke('stop_discovery');
+      setDiscovery(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to stop discovery');
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const setDiscoveryEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      await invoke('set_discovery_enabled', { enabled });
+      setDiscovery(prev => (prev ? { ...prev, enabled } : prev));
+    } catch (e) {
+      console.error('Failed to toggle discovery:', e);
     }
   }, []);
 
@@ -167,6 +215,7 @@ export function useServer() {
     logs,
     loading,
     error,
+    discovery,
     startServer,
     stopServer,
     updateConfig,
@@ -174,5 +223,9 @@ export function useServer() {
     openLogFolder,
     addLog,
     refreshDevices: loadDevices,
+    loadDiscovery,
+    startDiscovery,
+    stopDiscovery,
+    setDiscoveryEnabled,
   };
 }

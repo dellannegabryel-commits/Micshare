@@ -13,6 +13,7 @@ function App() {
     devices,
     logs,
     loading,
+    discovery,
     startServer,
     stopServer,
     updateConfig,
@@ -84,6 +85,7 @@ function App() {
             onStart={startServer}
             onStop={stopServer}
             loading={loading}
+            discovery={discovery}
           />
 
           {/* Device Selector */}
