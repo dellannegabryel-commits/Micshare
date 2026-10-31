@@ -1,5 +1,7 @@
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
 import { AudioServer, type ServerConfig } from './audioServer.js';
@@ -18,7 +20,6 @@ import {
   waitForExit,
   writeDaemonInfo,
 } from './cli/daemon.js';
-import { startUiServer } from './ui/server.js';
 
 const HELP = `micshare-pc ${VERSION} — servidor de áudio do PC
 
@@ -452,26 +453,42 @@ async function main(): Promise<void> {
   }
 
   if (command === 'ui') {
-    const uiPort = parseNumber('--port', values.port) ?? 41238;
-    try {
-      const { url } = await startUiServer({ port: uiPort, host: '127.0.0.1' });
-      if (!values['no-open']) {
-        try {
-          await open(url);
-        } catch (err) {
-          console.warn(`não foi possível abrir o navegador: ${(err as Error).message}`);
-        }
-      }
-      console.log('Pressione Ctrl+C para encerrar a UI.');
-      process.on('SIGINT', () => process.exit(0));
-      process.on('SIGTERM', () => process.exit(0));
-      await new Promise<void>(() => {
-        // mantém vivo
-      });
-    } catch (err) {
-      console.error('falha ao iniciar a UI:', (err as Error).message);
+    // Sobe o dev server do Next.js (packages/pc/src/ui/next) e abre o
+    // navegador. `--port` repassa a porta ao Next (padrão 3000).
+    const uiPort = parseNumber('--port', values.port) ?? 3000;
+    const nextDir = resolve(dirname(fileURLToPath(import.meta.url)), 'ui', 'next');
+    const nextBin = join(nextDir, 'node_modules', 'next', 'dist', 'bin', 'next');
+    if (!existsSync(nextBin)) {
+      console.error(`Next.js não encontrado em ${nextDir}`);
+      console.error('Rode "npm install" dentro de packages/pc/src/ui/next.');
       process.exit(1);
     }
+
+    const child = spawn(process.execPath, [nextBin, 'dev', '--port', String(uiPort)], {
+      cwd: nextDir,
+      stdio: 'inherit',
+      env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' },
+    });
+
+    if (!values['no-open']) {
+      setTimeout(() => {
+        void open(`http://localhost:${uiPort}`).catch((err) => {
+          console.warn(`não foi possível abrir o navegador: ${(err as Error).message}`);
+        });
+      }, 2500);
+    }
+    console.log(`Next.js dev server em http://localhost:${uiPort}`);
+    console.log('Pressione Ctrl+C para encerrar a UI.');
+
+    const forward = (signal: NodeJS.Signals) => () => {
+      if (!child.killed) child.kill(signal);
+    };
+    process.on('SIGINT', forward('SIGINT'));
+    process.on('SIGTERM', forward('SIGTERM'));
+    child.on('close', (code) => process.exit(code ?? 0));
+    await new Promise<void>(() => {
+      // mantém vivo; o exit acontece no close do filho
+    });
   }
 
   if (command !== 'run' && command !== 'dev') {

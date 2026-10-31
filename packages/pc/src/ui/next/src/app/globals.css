@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+/* Gruvbox + Apple Design System -------------------------------------- */
+
+:root {
+  /* superfícies claras (tema claro) */
+  --background: #f8f9fa;
+  --surface: #ffffff;
+  --surface-2: #f1f3f5;
+  --border: rgba(0, 0, 0, 0.08);
+  --foreground: #212529;
+  --muted: #6c757d;
+
+  /* acentos Gruvbox */
+  --primary: #9d4edd; /* roxo Gruvbox adaptado p/ contraste em claro */
+  --secondary: #c2603d; /* laranja Gruvbox em modo claro */
+  --accent: #a67c00; /* amarelo Gruvbox em modo claro */
+  --success: #4f9d69;
+  --danger: #bf3b3b;
+  --warning: #c2603d;
+}
+
+[data-theme="dark"] {
+  --background: #0b0f1a;
+  --surface: #141922;
+  --surface-2: #1c2330;
+  --border: rgba(255, 255, 255, 0.08);
+  --foreground: #d8dee9;
+  --muted: #8b93a5;
+
+  --primary: #bf61c6; /* Gruvbox purple */
+  --secondary: #d08770; /* Gruvbox orange */
+  --accent: #ebcb8b; /* Gruvbox yellow */
+  --success: #a3be8c;
+  --danger: #bf616a;
+  --warning: #d08770;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter",
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* brilho sutil estilo Apple nas superfícies */
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.04);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.surface-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.08);
+}

@@ -11,6 +11,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true
   },
-  "references": [{ "path": "../protocol" }],
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/ui/next", "node_modules"],
+  "references": [{ "path": "../protocol" }]
 }
