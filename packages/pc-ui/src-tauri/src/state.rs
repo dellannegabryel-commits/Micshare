@@ -17,6 +17,11 @@ pub struct AppState {
     server: RwLock<Option<Arc<Server>>>,
     /// Último erro de inicialização, para a UI exibir com código.
     last_error: RwLock<Option<CommandError>>,
+    /// Task emissoa de `server-stats` (garante um único emitter por app).
+    ///
+    /// Usa o `JoinHandle` do runtime do Tauri (o `spawn` de
+    /// `tauri::async_runtime` retorna esse tipo, não o do tokio).
+    stats_emitter: RwLock<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -27,6 +32,7 @@ impl AppState {
             config: RwLock::new(ServerConfig::default()),
             server: RwLock::new(None),
             last_error: RwLock::new(None),
+            stats_emitter: RwLock::new(None),
         }
     }
 
@@ -130,6 +136,40 @@ impl AppState {
         if let Some(server) = self.server.read().await.as_ref() {
             server.set_volume(volume);
         }
+    }
+
+    /// Troca o dispositivo de saída em quente.
+    ///
+    /// Retorna o nome do dispositivo aberto, ou `CommandError` estruturado.
+    pub async fn set_output_device(
+        &self,
+        device_substring: Option<String>,
+    ) -> Result<String, CommandError> {
+        let server =
+            self.server.read().await.clone().ok_or_else(|| {
+                CommandError::new("serverNotRunning", "servidor não está rodando")
+            })?;
+
+        // O swap bloqueia brevemente (join da thread do stream antigo + abertura
+        // do novo); roda em thread dedicada para não travar o runtime do Tauri.
+        let name = device_substring.clone();
+        tokio::task::spawn_blocking(move || server.set_output_device(name.as_deref()))
+            .await
+            .map_err(|err| CommandError::internal(format!("falha na troca de dispositivo: {err}")))?
+            .map_err(CommandError::audio_device)
+    }
+
+    /// Registra a task emissoa de `server-stats`, abortando a anterior (se houver).
+    ///
+    /// Garante um único emitter por aplicação: o auto-start do `setup` e o
+    /// `start_server` da UI podem ser chamados em sequência (restart) e, sem
+    /// isso, duas tasks emitiriam stats em paralelo.
+    pub async fn install_stats_emitter(&self, handle: tauri::async_runtime::JoinHandle<()>) {
+        let mut slot = self.stats_emitter.write().await;
+        if let Some(previous) = slot.take() {
+            previous.abort();
+        }
+        *slot = Some(handle);
     }
 
     /// Habilita ou desabilita o anúncio do beacon.

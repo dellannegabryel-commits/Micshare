@@ -11,7 +11,7 @@ pub mod resample;
 pub mod sink;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
@@ -114,24 +114,62 @@ pub struct AudioConfig {
 /// Pipeline de áudio: recebe os frames do celular e reproduz no PC.
 pub struct AudioPipeline {
     buffer: Arc<Mutex<JitterBuffer>>,
-    device_name: String,
+    /// Nome do dispositivo de saída em uso (legível para a UI).
+    device_name: RwLock<String>,
     /// Handle da task receptora, tomado no `shutdown` para aguardar a liberação
     /// do socket UDP antes de retornar (evita `portInUse` no restart).
     receiver: AsyncMutex<Option<JoinHandle<()>>>,
-    sink: SinkHandle,
+    /// Sink ativo; trocado em quente por [`AudioPipeline::set_output_device`].
+    sink: Mutex<SinkHandle>,
     controls: AudioControls,
+    /// Último dispositivo solicitado (substring; `None` = padrão do sistema).
+    /// Guardado para rollback quando a troca falha.
+    requested_device: Mutex<Option<String>>,
 }
 
 /// Mantém o stream do `cpal` vivo em uma thread dedicada.
 ///
 /// O `Stream` do cpal não é `Sync`; a thread apenas o segura até o pipeline
-/// parar, e o `Drop` sinaliza a saída.
+/// parar. `stop_and_join` aguarda a thread dropar o stream — essencial no
+/// hot-swap, para que o dispositivo antigo seja **liberado** antes de abrir
+/// o novo (WASAPI falha se o endpoint ainda estiver em uso).
 struct SinkHandle {
     stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SinkHandle {
+    /// Cria o handle e mova o `stream` para a thread dedicada.
+    fn spawn(stream: cpal::Stream) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let thread = std::thread::spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            // Só aqui o stream é dropado → dispositivo liberado.
+            drop(stream);
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// Sinaliza a parada e aguarda a thread dropar o stream.
+    fn stop_and_join(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl Drop for SinkHandle {
     fn drop(&mut self) {
+        // Melhor esforço: sinaliza a thread (que dropa o stream ao ver o flag).
+        // Não faz `join` no Drop para nunca bloquear o descarte; o caminho
+        // determinístico (stop/hot-swap) usa `stop_and_join`.
         self.stop.store(true, Ordering::Relaxed);
     }
 }
@@ -161,23 +199,17 @@ impl AudioPipeline {
 
         // O stream vive em uma thread dedicada: o `Stream` do cpal não é
         // `Sync`, e a thread apenas o mantém vivo até o pipeline parar.
-        let stop = Arc::new(AtomicBool::new(false));
-        let sink_stop = Arc::clone(&stop);
-        std::thread::spawn(move || {
-            while !sink_stop.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            drop(stream);
-        });
+        let sink_handle = SinkHandle::spawn(stream);
 
         let receiver = tokio::spawn(receive_frames(socket, Arc::clone(&buffer)));
 
         Ok(Self {
             buffer,
-            device_name,
+            device_name: RwLock::new(device_name),
             receiver: AsyncMutex::new(Some(receiver)),
-            sink: SinkHandle { stop },
+            sink: Mutex::new(sink_handle),
             controls,
+            requested_device: Mutex::new(config.device_substring.clone()),
         })
     }
 
@@ -189,8 +221,65 @@ impl AudioPipeline {
 
     /// Nome do dispositivo de saída em uso.
     #[must_use]
-    pub fn device_name(&self) -> &str {
-        &self.device_name
+    pub fn device_name(&self) -> String {
+        self.device_name
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Troca o dispositivo de saída **em quente**, preservando o jitter buffer.
+    ///
+    /// A troca é transacional:
+    /// 1. Abre o stream no novo dispositivo **antes** de derrubar o antigo —
+    ///    se falhar, o dispositivo atual continua tocando (nada muda).
+    /// 2. Só então para o sink antigo com `stop_and_join` (aguarda o drop do
+    ///    stream e a liberação do endpoint no WASAPI).
+    /// 3. Inicia o novo stream e atualiza o nome exposto na UI.
+    ///
+    /// O novo stream consome do **mesmo** `Arc<Mutex<JitterBuffer>>` alimentado
+    /// pela task UDP — sem reiniciar o servidor nem perder frames no meio da
+    /// troca (o buffer continua enfileirando enquanto o swap acontece).
+    pub fn set_output_device(&self, device_substring: Option<&str>) -> Result<String, DynError> {
+        // 1) Abre o novo stream primeiro (o antigo segue tocando em paralelo
+        //    durante a abertura; só o novo consome do buffer após o play).
+        let opened = sink::start_output(
+            device_substring,
+            Arc::clone(&self.buffer),
+            self.controls.clone(),
+            FRAME_SAMPLES,
+        );
+
+        let (new_stream, new_name) = match opened {
+            Ok(opened) => opened,
+            Err(err) => {
+                // Falhou abrir o novo: o sink antigo nunca foi tocado — a UI
+                // recebe o erro estruturado e o áudio continua no dispositivo
+                // atual.
+                return Err(
+                    format!("falha ao abrir o dispositivo '{device_substring:?}': {err}").into(),
+                );
+            }
+        };
+
+        // 2) Libera o dispositivo antigo de forma determinística.
+        if let Ok(mut sink) = self.sink.lock() {
+            sink.stop_and_join();
+        }
+
+        // 3) Assume o novo stream.
+        let new_handle = SinkHandle::spawn(new_stream);
+        if let Ok(mut sink) = self.sink.lock() {
+            *sink = new_handle;
+        }
+        if let Ok(mut name) = self.device_name.write() {
+            *name = new_name.clone();
+        }
+        if let Ok(mut requested) = self.requested_device.lock() {
+            *requested = device_substring.map(str::to_owned);
+        }
+
+        Ok(new_name)
     }
 
     /// Métricas do jitter buffer.
@@ -242,7 +331,9 @@ impl AudioPipeline {
             // Aguarda o drop real do future (socket liberado).
             let _ = handle.await;
         }
-        self.sink.stop.store(true, Ordering::Relaxed);
+        if let Ok(mut sink) = self.sink.lock() {
+            sink.stop_and_join();
+        }
     }
 }
 
@@ -251,12 +342,12 @@ impl Drop for AudioPipeline {
         // Melhor esforço: sinaliza a thread do sink e aborta a task receptora.
         // Não podemos aguardar aqui (Drop não é async), mas o caminho de
         // restart usa `stop().await`, que é determinístico.
-        self.sink.stop.store(true, Ordering::Relaxed);
         if let Ok(mut guard) = self.receiver.try_lock() {
             if let Some(handle) = guard.take() {
                 handle.abort();
             }
         }
+        // O Drop do SinkHandle sinaliza a thread do stream.
     }
 }
 

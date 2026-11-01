@@ -24,6 +24,7 @@ function App() {
     refreshDevices,
     setMute,
     setVolume,
+    setActiveSink,
     clearLogs,
   } = useServer();
 
@@ -115,7 +116,13 @@ function App() {
           <DeviceSelector
             devices={devices}
             selectedDevice={config.deviceSubstring}
-            onChange={(name) => updateConfig({ deviceSubstring: name || null })}
+            onChange={(name) => {
+              updateConfig({ deviceSubstring: name || null });
+              // Hot-swap: troca o stream ativo sem reiniciar o servidor.
+              setActiveSink(name || null).catch(() => {
+                // Erro já registrado em `error`/logs pelo hook.
+              });
+            }}
             onRefresh={refreshDevices}
           />
 

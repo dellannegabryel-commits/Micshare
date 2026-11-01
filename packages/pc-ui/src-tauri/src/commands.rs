@@ -151,6 +151,20 @@ pub async fn set_volume(state: State<'_, AppState>, volume: u32) -> Result<(), C
     Ok(())
 }
 
+/// Troca o dispositivo de saída de áudio **em quente** (hot-swap).
+///
+/// Recebe o nome (ou subnome) do dispositivo — o mesmo formato retornado por
+/// [`list_output_devices`]. O novo stream passa a consumir do mesmo jitter
+/// buffer; se a abertura falhar, o dispositivo atual **continua ativo** e o
+/// erro estruturado é retornado. Retorna o nome efetivamente aberto.
+#[tauri::command]
+pub async fn set_active_sink(
+    state: State<'_, AppState>,
+    device_name: Option<String>,
+) -> Result<String, CommandError> {
+    state.set_output_device(device_name).await
+}
+
 /// Lista dispositivos de saída de áudio disponíveis (com `isDefault` real).
 #[tauri::command]
 pub async fn list_output_devices() -> Result<Vec<crate::audio::OutputDevice>, CommandError> {
@@ -208,29 +222,39 @@ pub async fn open_log_folder(app: AppHandle) -> Result<(), CommandError> {
 
 /// Spawna uma task que emite `server-stats` a 1 Hz enquanto o servidor rodar.
 ///
-/// A task usa `app.state::<AppState>()` a cada tick para obter uma referência
-/// fresca ao estado (o `AppHandle` mantém o estado vivo durante toda a task).
+/// Idempotente: a task é registrada no [`AppState`] e a anterior é abortada,
+/// então chamadas repetidas (auto-start + restart pela UI) nunca duplicam o
+/// emitter. A task usa `app.state::<AppState>()` a cada tick para obter uma
+/// referência fresca ao estado.
 pub fn spawn_stats_emitter(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        use tauri::Manager;
+    use tauri::Manager;
 
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let handle = tauri::async_runtime::spawn({
+        let app = app.clone();
+        async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        loop {
-            ticker.tick().await;
+            loop {
+                ticker.tick().await;
 
-            let state = app.state::<AppState>();
+                let state = app.state::<AppState>();
 
-            // Sai do loop quando o servidor para de rodar.
-            if !state.is_running().await {
-                break;
-            }
+                // Sai do loop quando o servidor para de rodar.
+                if !state.is_running().await {
+                    break;
+                }
 
-            let stats = state.stats().await;
-            if app.emit(EVENT_STATS, &stats).is_err() {
-                break; // Janela fechada.
+                let stats = state.stats().await;
+                if app.emit(EVENT_STATS, &stats).is_err() {
+                    break; // Janela fechada.
+                }
             }
         }
+    });
+
+    // Um único emitter por app: aborta a task anterior antes de instalar a nova.
+    tauri::async_runtime::spawn(async move {
+        app.state::<AppState>().install_stats_emitter(handle).await;
     });
 }

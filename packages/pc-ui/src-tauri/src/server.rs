@@ -188,7 +188,7 @@ impl Server {
                 audio.metrics(),
                 audio.fps(),
                 audio.loss_pct(),
-                audio.device_name().to_owned(),
+                audio.device_name(),
             ),
             None => (JitterMetrics::default(), 0.0, 0.0, String::new()),
         };
@@ -215,6 +215,18 @@ impl Server {
     /// [`crate::audio::VOLUME_MAX`]).
     pub fn set_volume(&self, volume: u32) {
         self.controls.set_volume(volume);
+    }
+
+    /// Troca o dispositivo de saída em quente (sem reiniciar o servidor).
+    ///
+    /// Retorna o nome efetivamente aberto, ou `Err` com a causa (o dispositivo
+    /// anterior continua ativo nesse caso).
+    pub fn set_output_device(&self, device_substring: Option<&str>) -> Result<String, DynError> {
+        let audio = self
+            .audio
+            .as_ref()
+            .ok_or("pipeline de áudio indisponível (sem dispositivo de saída)")?;
+        audio.set_output_device(device_substring)
     }
 
     /// Atualiza as métricas divulgadas ao celular.

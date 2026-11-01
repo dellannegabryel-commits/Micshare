@@ -322,6 +322,23 @@ export function useServer() {
     }
   }, []);
 
+  /**
+   * Troca o dispositivo de saída em quente (hot-swap no backend).
+   * `null` volta ao dispositivo padrão do sistema.
+   */
+  const setActiveSink = useCallback(async (deviceName: string | null) => {
+    try {
+      const opened = await invoke<string>('set_active_sink', { deviceName });
+      setStats(prev => ({ ...prev, deviceName: opened }));
+      addLog('info', `Saída de áudio trocada para: ${opened}`);
+    } catch (e) {
+      const err = toCommandError(e, 'Falha ao trocar o dispositivo de saída');
+      setError(err);
+      addLog('error', `[${err.code}] ${err.message}`);
+      throw e;
+    }
+  }, [addLog]);
+
   const refreshDevices = useCallback(async () => {
     try {
       const list = await invoke<AudioDevice[]>('list_output_devices');
@@ -353,6 +370,7 @@ export function useServer() {
     setDiscoveryEnabled,
     setMute,
     setVolume,
+    setActiveSink,
     clearLogs,
   };
 }

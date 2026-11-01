@@ -26,6 +26,7 @@ pub fn run() {
             commands::set_discovery_enabled,
             commands::set_mute,
             commands::set_volume,
+            commands::set_active_sink,
             commands::list_output_devices,
             commands::start_discovery,
             commands::stop_discovery,
