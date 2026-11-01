@@ -146,6 +146,8 @@ export function useServer() {
     try {
       const finalConfig = { ...config, ...newConfig };
       await invoke('start_server', { config: finalConfig });
+      // Inicia o listener de eventos de estatísticas
+      await invoke('start_stats_listener');
       setConfig(finalConfig);
       await invoke('save_server_config', { config: finalConfig });
     } catch (e) {
