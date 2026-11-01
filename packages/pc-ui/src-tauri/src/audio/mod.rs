@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
 use crate::protocol::{AudioCodec, AudioFrameHeader, BIND_ADDR, HEADER_LEN};
@@ -57,7 +58,9 @@ pub struct AudioConfig {
 pub struct AudioPipeline {
     buffer: Arc<Mutex<JitterBuffer>>,
     device_name: String,
-    receiver: JoinHandle<()>,
+    /// Handle da task receptora, tomado no `shutdown` para aguardar a liberação
+    /// do socket UDP antes de retornar (evita `portInUse` no restart).
+    receiver: AsyncMutex<Option<JoinHandle<()>>>,
     sink: SinkHandle,
 }
 
@@ -109,7 +112,7 @@ impl AudioPipeline {
         Ok(Self {
             buffer,
             device_name,
-            receiver,
+            receiver: AsyncMutex::new(Some(receiver)),
             sink: SinkHandle { stop },
         })
     }
@@ -156,16 +159,34 @@ impl AudioPipeline {
         }
     }
 
-    /// Encerra o pipeline (socket e stream de saída).
-    pub fn stop(&self) {
-        self.receiver.abort();
+    /// Encerra o pipeline aguardando a liberação do socket UDP.
+    ///
+    /// `abort()` cancela a task, mas o future (e o socket que ela detém) só é
+    /// dropado no próximo tick do scheduler. Ao fazer `await` no `JoinHandle`,
+    /// garantimos que a task terminou e o socket foi fechado **antes** de
+    /// retornar — essencial para o restart não cair em `portInUse`.
+    pub async fn stop(&self) {
+        let handle = self.receiver.lock().await.take();
+        if let Some(handle) = handle {
+            handle.abort();
+            // Aguarda o drop real do future (socket liberado).
+            let _ = handle.await;
+        }
         self.sink.stop.store(true, Ordering::Relaxed);
     }
 }
 
 impl Drop for AudioPipeline {
     fn drop(&mut self) {
-        self.stop();
+        // Melhor esforço: sinaliza a thread do sink e aborta a task receptora.
+        // Não podemos aguardar aqui (Drop não é async), mas o caminho de
+        // restart usa `stop().await`, que é determinístico.
+        self.sink.stop.store(true, Ordering::Relaxed);
+        if let Ok(mut guard) = self.receiver.try_lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
     }
 }
 

@@ -188,13 +188,16 @@ impl Server {
     }
 
     /// Encerra todos os subsistemas.
-    pub fn stop(&self) {
+    ///
+    /// Torna-se `async` para aguardar o shutdown determinístico do pipeline de
+    /// áudio (liberação do socket UDP) antes de retornar — ver `AudioPipeline::stop`.
+    pub async fn stop(&self) {
         for task in &self.tasks {
             task.abort();
         }
         self.discovery.stop();
         if let Some(audio) = &self.audio {
-            audio.stop();
+            audio.stop().await;
         }
     }
 }

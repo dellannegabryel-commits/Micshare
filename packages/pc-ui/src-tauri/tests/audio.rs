@@ -16,6 +16,34 @@ fn buffer() -> Arc<Mutex<JitterBuffer>> {
     )))
 }
 
+/// Regressão do bug "portInUse no restart": abortar a task não libera o socket
+/// imediatamente (o drop é no próximo tick do scheduler). Ao aguardar o
+/// `JoinHandle` (`abort()` + `await`), a porta fica rebindável de forma
+/// determinística — é exatamente o mecanismo de `AudioPipeline::stop().await`.
+#[tokio::test]
+async fn abort_mais_await_libera_a_porta_para_rebind() {
+    let socket = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = socket.local_addr().unwrap();
+
+    // Task que segura o socket em loop, como `receive_frames` faz.
+    let task = tokio::spawn(async move {
+        let mut buf = [0_u8; 64];
+        loop {
+            let _ = socket.recv_from(&mut buf).await;
+        }
+    });
+
+    // Encerra de forma determinística: aborta e aguarda o future ser dropado.
+    task.abort();
+    let _ = task.await;
+
+    // Imediatamente rebind a mesma porta — deve funcionar sem `portInUse`.
+    let rebind = UdpSocket::bind(addr)
+        .await
+        .expect("a porta deveria estar liberada após abort+await");
+    assert_eq!(rebind.local_addr().unwrap(), addr);
+}
+
 #[tokio::test]
 async fn frame_udp_chega_ao_jitter_buffer() {
     let socket = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();

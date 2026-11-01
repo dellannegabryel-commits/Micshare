@@ -50,8 +50,10 @@ impl AppState {
         }
 
         // Derruba o servidor anterior antes de bindar as portas de novo.
-        if let Some(previous) = self.server.write().await.take() {
-            previous.stop();
+        // Solta o write-lock antes do await para não bloquear leituras.
+        let previous = self.server.write().await.take();
+        if let Some(previous) = previous {
+            previous.stop().await;
         }
 
         let config = self.config().await;
@@ -69,8 +71,9 @@ impl AppState {
 
     /// Encerra o servidor e limpa o último erro.
     pub async fn stop_server(&self) {
-        if let Some(server) = self.server.write().await.take() {
-            server.stop();
+        let server = self.server.write().await.take();
+        if let Some(server) = server {
+            server.stop().await;
         }
         *self.last_error.write().await = None;
     }
