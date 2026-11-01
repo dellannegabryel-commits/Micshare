@@ -151,11 +151,10 @@ pub async fn set_volume(state: State<'_, AppState>, volume: u32) -> Result<(), C
     Ok(())
 }
 
-/// Lista dispositivos de saída de áudio disponíveis.
+/// Lista dispositivos de saída de áudio disponíveis (com `isDefault` real).
 #[tauri::command]
-pub async fn list_output_devices() -> Result<Vec<String>, CommandError> {
-    let devices = output_devices().map_err(CommandError::audio_device)?;
-    Ok(devices.into_iter().map(|d| d.name).collect())
+pub async fn list_output_devices() -> Result<Vec<crate::audio::OutputDevice>, CommandError> {
+    output_devices().map_err(CommandError::audio_device)
 }
 
 /// Inicia o beacon de descoberta (se não estiver rodando).

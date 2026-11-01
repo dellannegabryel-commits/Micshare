@@ -104,8 +104,8 @@ export function useServer() {
       }
 
       try {
-        const names = await invoke<string[]>('list_output_devices');
-        setDevices(names.map(name => ({ name, isDefault: false })));
+        const list = await invoke<AudioDevice[]>('list_output_devices');
+        setDevices(list);
       } catch (e) {
         console.error('Failed to load devices:', e);
       }
@@ -303,8 +303,8 @@ export function useServer() {
 
   const refreshDevices = useCallback(async () => {
     try {
-      const names = await invoke<string[]>('list_output_devices');
-      setDevices(names.map(name => ({ name, isDefault: false })));
+      const list = await invoke<AudioDevice[]>('list_output_devices');
+      setDevices(list);
     } catch (e) {
       console.error('Failed to refresh devices:', e);
     }
