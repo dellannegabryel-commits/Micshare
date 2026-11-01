@@ -1,2 +1,0 @@
-﻿
-C:\Users\della\workspace\Micshare\packages\pc>C:\Users\della\workspace\Micshare\packages\pc\\node_modules\tsx\dist\cli.mjs status 
