@@ -58,7 +58,7 @@ export function ServerStatus({ running, sessions, deviceName, onStart, onStop, l
       <div className="flex gap-3">
         {running ? (
           <button
-            onClick={onStop}
+            onClick={() => onStop()}
             disabled={loading}
             className="flex-1 btn-danger"
           >
@@ -66,7 +66,7 @@ export function ServerStatus({ running, sessions, deviceName, onStart, onStop, l
           </button>
         ) : (
           <button
-            onClick={onStart}
+            onClick={() => onStart()}
             disabled={loading}
             className="flex-1 btn-primary"
           >

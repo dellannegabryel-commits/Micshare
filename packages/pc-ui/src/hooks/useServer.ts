@@ -51,6 +51,26 @@ function toCommandError(e: unknown, fallback: string): CommandError {
   };
 }
 
+/**
+ * Converte o argumento de `startServer` em um patch de config válido.
+ *
+ * Se o handler for usado como `onClick={startServer}`, o React injeta o evento
+ * de clique (um objeto circular com referências ao DOM). Espalhar isso na config
+ * faz o `JSON.stringify` do `invoke` lançar "Converting circular structure".
+ * Aqui só aceitamos objetos planos — qualquer outra coisa vira `{}`.
+ */
+function toConfigPatch(v: unknown): Partial<ServerConfig> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+    return {};
+  }
+  const proto = Object.getPrototypeOf(v);
+  // Só objetos literais (`{}`) — rejeita eventos e elementos DOM.
+  if (proto !== Object.prototype && proto !== null) {
+    return {};
+  }
+  return v as Partial<ServerConfig>;
+}
+
 export function useServer() {
   const [config, setConfig] = useState<ServerConfig>(DEFAULT_CONFIG);
   const [stats, setStats] = useState<ServerStats>(EMPTY_STATS);
@@ -154,7 +174,8 @@ export function useServer() {
     setError(null);
 
     try {
-      const finalConfig = { ...config, ...newConfig };
+      // Guarda: se vier um evento (handler usado como onClick), vira `{}`.
+      const finalConfig = { ...config, ...toConfigPatch(newConfig) };
       await invoke('start_server', { config: finalConfig });
       setConfig(finalConfig);
       await invoke('save_server_config', { config: finalConfig });
