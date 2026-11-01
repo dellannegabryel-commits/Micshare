@@ -11,11 +11,13 @@
 #[derive(Debug, Clone)]
 pub struct LinearResampler {
     /// Amostras de entrada por amostra de saída (`origem / destino`).
-    step: f64,
-    /// Posição fracionária dentro da janela atual.
+    pub step: f64,
+    /// Posição fracionária no stream de entrada (acumulada entre chamadas).
     phase: f64,
-    /// Última amostra da janela anterior (histórico).
+    /// Última amostra de entrada vista (para interpolação no primeiro output).
     previous: i16,
+    /// Se é a primeira chamada a `process` (para inicializar `previous` corretamente).
+    first_call: bool,
 }
 
 impl LinearResampler {
@@ -27,6 +29,7 @@ impl LinearResampler {
             step,
             phase: 0.0,
             previous: 0,
+            first_call: true,
         }
     }
 
@@ -41,35 +44,59 @@ impl LinearResampler {
     /// Retorna quantas amostras foram geradas. A fase é preservada entre as
     /// chamadas, de modo que o fluxo contínuo não sofre descontinuidade.
     pub fn process(&mut self, input: &[i16], output: &mut [i16]) -> usize {
-        if input.is_empty() {
+        if input.is_empty() || output.is_empty() {
             return 0;
         }
 
+        // Caso passthrough: cópia direta (mais rápido e exato).
+        if self.is_passthrough() {
+            let n = input.len().min(output.len());
+            output[..n].copy_from_slice(&input[..n]);
+            return n;
+        }
+
         let mut produced = 0;
-        let mut position = self.phase;
+        let mut pos = self.phase;
+
+        // Na primeira chamada, inicializa `previous` com a primeira amostra de entrada
+        // para que o primeiro output seja igual a input[0] (frac=0 -> before=previous=input[0]).
+        if self.first_call {
+            self.previous = input[0];
+            self.first_call = false;
+        }
 
         while produced < output.len() {
-            let window = position.floor() as isize;
-            if window + 1 >= input.len() as isize + 1 {
+            let idx = pos.floor() as isize;
+
+            // Se passamos do final da entrada, paramos.
+            if idx >= input.len() as isize {
                 break;
             }
 
-            let fraction = position - window as f64;
-            let (before, after) = if window <= 0 {
+            let frac = pos - idx as f64;
+
+            // Interpola entre input[idx] e input[idx + 1] (ou `previous` se idx < 0).
+            let (before, after) = if idx <= 0 {
                 (self.previous, input[0])
+            } else if idx as usize + 1 >= input.len() {
+                // Última amostra disponível - usa a última duas vezes (hold).
+                (input[idx as usize - 1], input[idx as usize])
             } else {
-                (input[(window - 1) as usize], input[window as usize])
+                (input[(idx - 1) as usize], input[idx as usize])
             };
 
-            let value = f64::from(before) * (1.0 - fraction) + f64::from(after) * fraction;
-            output[produced] = value.round().clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+            let value = f64::from(before) * (1.0 - frac) + f64::from(after) * frac;
+            output[produced] = value
+                .round()
+                .clamp(f64::from(i16::MIN), f64::from(i16::MAX))
+                as i16;
 
             produced += 1;
-            position += self.step;
+            pos += self.step;
         }
 
-        // A próxima janela começa na última amostra desta.
-        self.phase = position - (input.len() as f64 + 1.0);
+        // Atualiza fase para a próxima chamada: onde paramos no stream de entrada.
+        self.phase = pos - input.len() as f64;
         self.previous = *input.last().unwrap_or(&0);
 
         produced
@@ -149,7 +176,7 @@ mod tests {
         }
 
         // 480 amostras de entrada a 48 kHz → 441 amostras a 44,1 kHz por bloco.
-        let expected = (480.0 * 44_100.0 / 48_000.0 * 10.0).round() as usize;
+        let expected = (480.0_f64 * 44_100.0 / 48_000.0 * 10.0).round() as usize;
         assert!(
             (total as i64 - expected as i64).abs() <= 2,
             "produziu {total}, esperado ~{expected}"

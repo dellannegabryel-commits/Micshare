@@ -21,6 +21,12 @@ pub fn run() {
             commands::get_sessions,
             commands::get_discovery_status,
             commands::set_discovery_enabled,
+            commands::list_output_devices,
+            commands::start_discovery,
+            commands::stop_discovery,
+            commands::install_vbcable,
+            commands::open_log_folder,
+            commands::start_stats_listener,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar o Micshare");

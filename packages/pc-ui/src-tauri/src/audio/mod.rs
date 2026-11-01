@@ -7,6 +7,7 @@
 //! - **cpal**: reproduz no dispositivo de saída do PC.
 
 pub mod jitter;
+pub mod resample;
 pub mod sink;
 
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -75,7 +75,7 @@ async fn canal_um_e_frame_por_frame() {
     let sender = UdpSocket::bind(("127.0.0.1", 0)).await.unwrap();
     let pcm = vec![0_i16; FRAME_SAMPLES];
     for seq in 0..5 {
-        let datagram = build_frame(seq, 1_000 + u32::from(seq), &pcm);
+        let datagram = build_frame(seq, 1_000 + seq, &pcm);
         sender.send_to(&datagram, addr).await.unwrap();
     }
 

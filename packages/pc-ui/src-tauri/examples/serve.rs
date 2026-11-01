@@ -11,7 +11,7 @@ use micshare_pc_ui_lib::server::Server;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = ServerConfig::default();
-    let server = Arc::new(Server::start(config).await?);
+    let server = Arc::new(Server::start(config, None).await?);
 
     println!("servidor PC no ar (beacon 41234, áudio 41235, controle 41236)");
 

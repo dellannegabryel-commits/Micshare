@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 
 use crate::config::ServerConfig;
 use crate::control::SessionInfo;
@@ -14,6 +14,8 @@ use crate::server::{Server, ServerStats};
 pub struct AppState {
     config: RwLock<ServerConfig>,
     server: RwLock<Option<Arc<Server>>>,
+    /// Canal para emitir estatísticas do servidor como eventos Tauri.
+    stats_tx: RwLock<Option<broadcast::Sender<ServerStats>>>,
 }
 
 impl AppState {
@@ -23,6 +25,7 @@ impl AppState {
         Self {
             config: RwLock::new(ServerConfig::default()),
             server: RwLock::new(None),
+            stats_tx: RwLock::new(None),
         }
     }
 
@@ -44,11 +47,13 @@ impl AppState {
         }
 
         let config = self.config().await;
-        let server = Server::start(config)
+        let (stats_tx, _) = broadcast::channel(16);
+        let server = Server::start(config, Some(stats_tx.clone()))
             .await
             .map_err(|err| format!("falha ao iniciar o servidor: {err}"))?;
 
         *self.server.write().await = Some(server);
+        *self.stats_tx.write().await = Some(stats_tx);
         Ok(())
     }
 
@@ -57,6 +62,7 @@ impl AppState {
         if let Some(server) = self.server.write().await.take() {
             server.stop();
         }
+        *self.stats_tx.write().await = None;
     }
 
     /// `true` se o servidor está rodando.
@@ -94,6 +100,11 @@ impl AppState {
         if let Some(server) = self.server.read().await.as_ref() {
             server.discovery().set_enabled(enabled);
         }
+    }
+
+    /// Retorna um receiver para o canal de estatísticas (para emitir eventos Tauri).
+    pub async fn subscribe_stats(&self) -> Option<broadcast::Receiver<ServerStats>> {
+        self.stats_tx.read().await.as_ref().map(|tx| tx.subscribe())
     }
 }
 

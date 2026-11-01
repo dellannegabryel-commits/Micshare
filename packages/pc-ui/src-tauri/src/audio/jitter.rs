@@ -339,17 +339,22 @@ mod tests {
             buffer.push(seq, frame(seq as i16));
         }
 
-        // Consome 200 amostras do frame 0 e 100 do frame 1.
+        // Frame size = 480. Pede 300 amostras -> pega 300 do frame 0 (restam 180).
         let mut out = vec![0_i16; 300];
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
-        assert!(out[..200].iter().all(|sample| *sample == 0));
-        assert!(out[200..].iter().all(|sample| *sample == 1));
+        assert!(out.iter().all(|sample| *sample == 0)); // tudo do frame 0
 
-        // O resto do frame 1 continua disponível.
+        // Pede 380 amostras -> pega 180 restantes do frame 0 + 200 do frame 1.
         let mut out = vec![9_i16; 380];
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
-        assert!(out[..100].iter().all(|sample| *sample == 1));
-        assert!(out[100..].iter().all(|sample| *sample == 2));
+        assert!(out[..180].iter().all(|sample| *sample == 0)); // resto do frame 0
+        assert!(out[180..].iter().all(|sample| *sample == 1)); // início do frame 1
+
+        // Pede 380 amostras -> pega 280 restantes do frame 1 (480-200) + 100 do frame 2.
+        let mut out = vec![9_i16; 380];
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert!(out[..280].iter().all(|sample| *sample == 1)); // resto do frame 1
+        assert!(out[280..].iter().all(|sample| *sample == 2)); // início do frame 2
     }
 
     #[test]
