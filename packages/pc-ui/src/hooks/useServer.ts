@@ -117,6 +117,14 @@ export function useServer() {
       } catch (e) {
         console.error('Failed to load status:', e);
       }
+
+      // Estado do beacon (a pílula "Beacon" na UI).
+      try {
+        const beacon = await invoke<DiscoveryStatus | null>('get_discovery_status');
+        setDiscovery(beacon);
+      } catch (e) {
+        console.error('Failed to load discovery:', e);
+      }
     };
 
     boot();
@@ -158,6 +166,7 @@ export function useServer() {
   }, []);
 
   // Poll de sessões (o backend já emite `server-stats`, mas mantemos fallback).
+  // Atualiza também o beacon para a pílula "Beacon" refletir o estado real.
   useEffect(() => {
     if (!running) return;
     const interval = setInterval(async () => {
@@ -166,6 +175,12 @@ export function useServer() {
         setStats(current);
       } catch (e) {
         console.error('Failed to fetch stats:', e);
+      }
+      try {
+        const beacon = await invoke<DiscoveryStatus | null>('get_discovery_status');
+        setDiscovery(beacon);
+      } catch (e) {
+        console.error('Failed to fetch discovery:', e);
       }
     }, 2000);
     return () => clearInterval(interval);
@@ -201,6 +216,7 @@ export function useServer() {
       await invoke('stop_server');
       setRunning(false);
       setStats(EMPTY_STATS);
+      setDiscovery(null);
       addLog('info', 'Servidor parado.');
     } catch (e) {
       const err = toCommandError(e, 'Falha ao parar o servidor');
