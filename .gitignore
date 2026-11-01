@@ -54,6 +54,9 @@ github-secrets.txt
 keystore-base64.txt
 generate-keystore.sh
 
-# Android local properties (contains signing keys)
+# Android local properties (contem o caminho do SDK e pode conter signing keys)
 mobile/local.properties
-mobile/gradle.properties
+
+# mobile/gradle.properties e versionado de proposito: sem android.useAndroidX=true
+# o build Android falha em qualquer maquina limpa (inclusive no CI).
+# As chaves de assinatura NAO ficam aqui: o CI as injeta em tempo de build.

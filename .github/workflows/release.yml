@@ -47,6 +47,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Resolver tag e versão
         id: version
         shell: bash
@@ -112,6 +117,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - name: Setup JDK ${{ env.JDK_VERSION }}
         uses: actions/setup-java@v5
         with:
@@ -123,18 +133,11 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           # compileSdk do projeto é 35: instalar o 34 quebrava o build.
-          packages: platforms;android-${{ env.ANDROID_SDK }} build-tools;${{ env.ANDROID_SDK }}.0.0
+          packages: platforms;android-${{ env.ANDROID_SDK }} build-tools;${{ env.ANDROID_SDK }}.0.0 platform-tools
           accept-android-sdk-licenses: true
 
-      - name: Setup Gradle cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/**/*.gradle.kts', 'mobile/**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
+      # O cache do Gradle vem do setup-java (cache: gradle), que já cobre
+      # ~/.gradle/caches e ~/.gradle/wrapper — sem cache duplicado aqui.
 
       - name: Sincronizar versão nos manifests
         run: node scripts/set-version.mjs "${{ needs.prepare.outputs.version }}"
@@ -183,12 +186,35 @@ jobs:
           KEYSTORE_PATH: ${{ steps.decode_keystore.outputs.keystore_path }}
         run: |
           set -euo pipefail
-          cat > gradle.properties <<EOF
-          android.keystore.path=$KEYSTORE_PATH
-          android.keystore.password=$KEYSTORE_PASSWORD
-          android.key.alias=$KEY_ALIAS
-          android.key.password=$KEY_PASSWORD
-          EOF
+
+          # O alias do keystore e "micshare", mas o secret foi gravado com um
+          # espaco a esquerda (" micshare"). Sem o trim, a assinatura falha.
+          KEY_ALIAS="$(printf '%s' "$KEY_ALIAS" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -z "$KEY_ALIAS" ]; then
+            echo "::error::O secret ANDROID_KEY_ALIAS ficou vazio depois do trim."
+            exit 1
+          fi
+
+          # O build.gradle.kts usa a MESMA propriedade (android.keystore.password)
+          # para storePassword e keyPassword: os dois secrets precisam bater.
+          if [ "$KEYSTORE_PASSWORD" != "$KEY_PASSWORD" ]; then
+            echo "::error::ANDROID_KEYSTORE_PASSWORD e ANDROID_KEY_PASSWORD divergem — o build.gradle.kts usa 'android.keystore.password' para os dois. Alinhe os secrets."
+            exit 1
+          fi
+
+          # As propriedades sao ANEXADAS (e nao sobrescritas) para preservar
+          # android.useAndroidX=true e o restante do gradle.properties versionado.
+          # Os nomes abaixo sao exatamente os lidos por mobile/app/build.gradle.kts.
+          {
+            printf '\n'
+            printf '# --- Injetado pelo CI (release signing) ---\n'
+            printf 'android.keystore.path=%s\n' "$KEYSTORE_PATH"
+            printf 'android.keystore.password=%s\n' "$KEYSTORE_PASSWORD"
+            printf 'android.keystore.alias=%s\n' "$KEY_ALIAS"
+          } >> gradle.properties
+
+          echo "Configuracao de assinatura do release aplicada (espacos do alias removidos)."
+          grep -E '^android\.(useAndroidX|enableJetifier|nonTransitiveRClass|nonFinalResIds)=' gradle.properties || true
 
       - name: Build release APK
         working-directory: ./mobile
@@ -269,8 +295,9 @@ jobs:
 
       - name: Build Tauri App
         working-directory: ./pc
-        env:
-          PATH: ${{ env.PATH }};C:\Users\runneradmin\.cargo\bin
+        # Sem override de PATH: o cargo do rust-toolchain ja esta no PATH do
+        # runner, e sobrescrever PATH aqui quebraria o npm/node se o
+        # ${{ env.PATH }} viesse vazio.
         run: npm run tauri:build
 
       - name: Verificar versão do executável
@@ -351,6 +378,14 @@ jobs:
           # Segunda guarda: protege contra corrida entre o prepare e este job.
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::error::A release $TAG foi criada durante o build — abortando para não duplicar assets."
+            exit 1
+          fi
+
+          # Terceira guarda: a tag precisa existir no repositorio. Sem isso,
+          # o `gh release create` criaria a tag apontando para a branch padrao
+          # (main), e os artefatos seriam publicados com a versao errada.
+          if ! gh api "repos/{owner}/{repo}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::A tag $TAG não existe no repositorio — envie a tag antes de publicar."
             exit 1
           fi
 
