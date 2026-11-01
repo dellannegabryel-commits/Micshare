@@ -13,6 +13,9 @@ export interface ServerStats {
   fps: number;
   lossPct: number;
   deviceName: string;
+  muted: boolean;
+  /** Volume fixed-point do backend: 1000 = 100%, 4000 = 400%. */
+  volume: number;
 }
 
 export interface JitterMetrics {

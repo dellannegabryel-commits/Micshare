@@ -135,6 +135,22 @@ pub async fn set_discovery_enabled(
     Ok(())
 }
 
+/// Liga ou desliga o mute da reprodução no PC.
+#[tauri::command]
+pub async fn set_mute(state: State<'_, AppState>, muted: bool) -> Result<(), CommandError> {
+    state.set_mute(muted).await;
+    Ok(())
+}
+
+/// Define o volume da reprodução no PC (fixed-point: 1000 = 100%).
+///
+/// Valores acima de [`crate::audio::VOLUME_MAX`] são limitados no backend.
+#[tauri::command]
+pub async fn set_volume(state: State<'_, AppState>, volume: u32) -> Result<(), CommandError> {
+    state.set_volume(volume).await;
+    Ok(())
+}
+
 /// Lista dispositivos de saída de áudio disponíveis.
 #[tauri::command]
 pub async fn list_output_devices() -> Result<Vec<String>, CommandError> {

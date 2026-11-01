@@ -22,6 +22,8 @@ function App() {
     installVBCable,
     openLogFolder,
     refreshDevices,
+    setMute,
+    setVolume,
   } = useServer();
 
   const isVBCableInstalled = devices.some(d =>
@@ -118,10 +120,10 @@ function App() {
 
           {/* Controls Panel */}
           <ControlsPanel
-            muted={false} // TODO: get from server
-            volume={1.0}
-            onMuteChange={() => {}}
-            onVolumeChange={() => {}}
+            muted={stats.muted}
+            volume={stats.volume / 1000}
+            onMuteChange={setMute}
+            onVolumeChange={(v) => setVolume(Math.round(v * 1000))}
           />
 
           {/* Stats Panel */}

@@ -10,7 +10,7 @@ pub mod jitter;
 pub mod resample;
 pub mod sink;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -43,6 +43,63 @@ pub const FRAME_PAYLOAD_LEN: u16 = (FRAME_SAMPLES * 2) as u16;
 /// Profundidade máxima do jitter buffer (ms).
 pub const MAX_BUFFER_MS: u32 = 100;
 
+/// Volume "unity gain" em fixed-point: 1000 = 100%.
+pub const VOLUME_UNITY: u32 = 1000;
+
+/// Volume máximo em fixed-point: 4000 = 400% (limite do slider da UI).
+pub const VOLUME_MAX: u32 = 4000;
+
+/// Controles de reprodução do PC (mute/volume), aplicados no callback RT do sink.
+///
+/// O estado vive em átomos compartilhados entre a thread de comando (UI) e a
+/// thread de tempo real do `cpal` — nenhum lock, nenhuma alocação no caminho
+/// quente. É controle **local do PC**, distinto do mute/volume que o celular
+/// envia pelo canal de controle (WebSocket).
+#[derive(Debug, Clone)]
+pub struct AudioControls {
+    mute: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>,
+}
+
+impl Default for AudioControls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioControls {
+    /// Cria os controles com mute desligado e volume em 100%.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            mute: Arc::new(AtomicBool::new(false)),
+            volume: Arc::new(AtomicU32::new(VOLUME_UNITY)),
+        }
+    }
+
+    /// Liga ou desliga o mute da reprodução.
+    pub fn set_mute(&self, muted: bool) {
+        self.mute.store(muted, Ordering::Relaxed);
+    }
+
+    /// `true` se a reprodução está mutada.
+    #[must_use]
+    pub fn muted(&self) -> bool {
+        self.mute.load(Ordering::Relaxed)
+    }
+
+    /// Define o volume (fixed-point `0..=VOLUME_MAX`; acima é limitado).
+    pub fn set_volume(&self, volume: u32) {
+        self.volume.store(volume.min(VOLUME_MAX), Ordering::Relaxed);
+    }
+
+    /// Volume atual (fixed-point: 1000 = 100%).
+    #[must_use]
+    pub fn volume(&self) -> u32 {
+        self.volume.load(Ordering::Relaxed)
+    }
+}
+
 /// Configuração do pipeline de áudio.
 #[derive(Debug, Clone)]
 pub struct AudioConfig {
@@ -62,6 +119,7 @@ pub struct AudioPipeline {
     /// do socket UDP antes de retornar (evita `portInUse` no restart).
     receiver: AsyncMutex<Option<JoinHandle<()>>>,
     sink: SinkHandle,
+    controls: AudioControls,
 }
 
 /// Mantém o stream do `cpal` vivo em uma thread dedicada.
@@ -80,7 +138,11 @@ impl Drop for SinkHandle {
 
 impl AudioPipeline {
     /// Sobe o pipeline: bind no socket UDP e inicia a reprodução.
-    pub async fn start(config: AudioConfig) -> Result<Self, DynError> {
+    ///
+    /// `controls` é compartilhado com o callback do sink (mute/volume aplicados
+    /// em tempo real) e pode ser criado pelo dono para sobreviver a restarts
+    /// do pipeline.
+    pub async fn start(config: AudioConfig, controls: AudioControls) -> Result<Self, DynError> {
         let socket = UdpSocket::bind((BIND_ADDR, config.port)).await?;
 
         let buffer = Arc::new(Mutex::new(JitterBuffer::new(
@@ -93,6 +155,7 @@ impl AudioPipeline {
         let (stream, device_name) = sink::start_output(
             config.device_substring.as_deref(),
             Arc::clone(&buffer),
+            controls.clone(),
             FRAME_SAMPLES,
         )?;
 
@@ -114,7 +177,14 @@ impl AudioPipeline {
             device_name,
             receiver: AsyncMutex::new(Some(receiver)),
             sink: SinkHandle { stop },
+            controls,
         })
+    }
+
+    /// Controles de mute/volume da reprodução (compartilhados com o sink).
+    #[must_use]
+    pub fn controls(&self) -> &AudioControls {
+        &self.controls
     }
 
     /// Nome do dispositivo de saída em uso.

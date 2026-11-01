@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::task::JoinHandle;
 
-use crate::audio::{AudioConfig, AudioPipeline, JitterMetrics};
+use crate::audio::{AudioConfig, AudioControls, AudioPipeline, JitterMetrics, VOLUME_UNITY};
 use crate::config::ServerConfig;
 use crate::control::{ControlConfig, ControlServer, ControlStats, SessionInfo};
 use crate::discovery::{BeaconConfig, Discovery};
@@ -24,7 +24,7 @@ pub const TARGET_BUFFER_MS: u16 = 30;
 const STATS_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Estatísticas agregadas do servidor, espelhando `ServerStats` no frontend.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStats {
     /// Se o servidor está rodando.
@@ -39,6 +39,25 @@ pub struct ServerStats {
     pub loss_pct: f32,
     /// Dispositivo de saída em uso.
     pub device_name: String,
+    /// `true` se a reprodução no PC está mutada.
+    pub muted: bool,
+    /// Volume da reprodução no PC (fixed-point: 1000 = 100%).
+    pub volume: u32,
+}
+
+impl Default for ServerStats {
+    fn default() -> Self {
+        Self {
+            running: false,
+            sessions: 0,
+            jitter: JitterMetrics::default(),
+            fps: 0.0,
+            loss_pct: 0.0,
+            device_name: String::new(),
+            muted: false,
+            volume: VOLUME_UNITY,
+        }
+    }
 }
 
 /// Servidor PC: coordena descoberta, controle e áudio.
@@ -48,6 +67,8 @@ pub struct Server {
     control: Arc<ControlServer>,
     audio: Option<Arc<AudioPipeline>>,
     tasks: Vec<JoinHandle<()>>,
+    /// Mute/volume da reprodução no PC (compartilhado com o sink).
+    controls: AudioControls,
 }
 
 impl Server {
@@ -77,6 +98,11 @@ impl Server {
 
         let mut tasks = Vec::new();
 
+        // Controles de reprodução do PC (mute/volume). Criados aqui para
+        // sobreviverem a falhas do pipeline de áudio (sem dispositivo, os
+        // comandos continuam funcionando e o estado permanece visível).
+        let controls = AudioControls::new();
+
         let control_task = {
             let control = Arc::clone(&control);
             tokio::spawn(async move {
@@ -88,11 +114,14 @@ impl Server {
         tasks.push(control_task);
 
         // Áudio: recebe os frames do celular (UDP 41235) e reproduz no PC.
-        let audio = match AudioPipeline::start(AudioConfig {
-            port: config.audio_port,
-            device_substring: config.device_substring.clone(),
-            target_buffer_ms: TARGET_BUFFER_MS,
-        })
+        let audio = match AudioPipeline::start(
+            AudioConfig {
+                port: config.audio_port,
+                device_substring: config.device_substring.clone(),
+                target_buffer_ms: TARGET_BUFFER_MS,
+            },
+            controls.clone(),
+        )
         .await
         {
             Ok(pipeline) => {
@@ -134,6 +163,7 @@ impl Server {
             control,
             audio,
             tasks,
+            controls,
         }))
     }
 
@@ -167,7 +197,20 @@ impl Server {
             fps,
             loss_pct,
             device_name,
+            muted: self.controls.muted(),
+            volume: self.controls.volume(),
         }
+    }
+
+    /// Liga ou desliga o mute da reprodução no PC.
+    pub fn set_mute(&self, muted: bool) {
+        self.controls.set_mute(muted);
+    }
+
+    /// Define o volume da reprodução no PC (fixed-point, limitado a
+    /// [`crate::audio::VOLUME_MAX`]).
+    pub fn set_volume(&self, volume: u32) {
+        self.controls.set_volume(volume);
     }
 
     /// Atualiza as métricas divulgadas ao celular.

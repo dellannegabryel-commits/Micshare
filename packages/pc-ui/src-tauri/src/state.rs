@@ -118,6 +118,20 @@ impl AppState {
             .map(|server| server.discovery().status())
     }
 
+    /// Liga ou desliga o mute da reprodução no PC (no-op se parado).
+    pub async fn set_mute(&self, muted: bool) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.set_mute(muted);
+        }
+    }
+
+    /// Define o volume da reprodução no PC (no-op se parado).
+    pub async fn set_volume(&self, volume: u32) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.set_volume(volume);
+        }
+    }
+
     /// Habilita ou desabilita o anúncio do beacon.
     pub async fn set_discovery_enabled(&self, enabled: bool) {
         if let Some(server) = self.server.read().await.as_ref() {

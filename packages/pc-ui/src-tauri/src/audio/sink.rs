@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, Stream, StreamConfig, SupportedStreamConfig};
 
+use super::AudioControls;
 use super::jitter::{JitterBuffer, PopStatus};
 use super::resample::LinearResampler;
 
@@ -140,11 +141,17 @@ struct Playout {
     mono_buf: Vec<i16>,
     /// Buffer temporário mono reamostrado (taxa do dispositivo).
     resampled_buf: Vec<i16>,
+    /// Mute/volume do PC, aplicados por amostra no caminho quente.
+    controls: AudioControls,
 }
 
 impl Playout {
     /// Cria o estado de playout a partir da configuração suportada do dispositivo.
-    fn new(buffer: Arc<Mutex<JitterBuffer>>, supported: &SupportedStreamConfig) -> Self {
+    fn new(
+        buffer: Arc<Mutex<JitterBuffer>>,
+        supported: &SupportedStreamConfig,
+        controls: AudioControls,
+    ) -> Self {
         let device_sample_rate = supported.sample_rate();
         let channels = supported.channels();
 
@@ -173,6 +180,19 @@ impl Playout {
             channels,
             mono_buf,
             resampled_buf,
+            controls,
+        }
+    }
+
+    /// Ganho atual em fixed-point (0 se mutado; 1000 = 100%).
+    ///
+    /// Leitura relaxed de átomos — segura no caminho RT.
+    #[inline]
+    fn gain(&self) -> i32 {
+        if self.controls.muted() {
+            0
+        } else {
+            self.controls.volume() as i32
         }
     }
 
@@ -211,12 +231,14 @@ impl Playout {
             (&self.mono_buf[..frames], frames)
         };
 
-        // 3) Escreve interleaved: cada amostra mono → todos os canais.
+        // 3) Escreve interleaved: cada amostra mono → todos os canais, com o
+        //    ganho do PC (mute → 0; volume fixed-point 1000 = 100%).
         //    Se src_len < frames (underrun), preenche o resto com silêncio.
+        let gain = self.gain();
         let mut src_idx = 0;
         for frame in 0..frames {
             let sample = if src_idx < src_len {
-                let s = src[src_idx];
+                let s = apply_gain(src[src_idx], gain);
                 src_idx += 1;
                 s
             } else {
@@ -265,6 +287,8 @@ impl Playout {
         };
 
         let mut src_idx = 0;
+        let gain = self.gain();
+        let gain_f32 = gain as f32 / crate::audio::VOLUME_UNITY as f32;
         for frame in 0..frames {
             let sample_i16 = if src_idx < src_len {
                 let s = src[src_idx];
@@ -273,7 +297,7 @@ impl Playout {
             } else {
                 0
             };
-            let sample_f32 = f32::from(sample_i16) / 32_768.0;
+            let sample_f32 = (f32::from(sample_i16) / 32_768.0) * gain_f32;
             for ch in 0..self.channels as usize {
                 data[frame * self.channels as usize + ch] = sample_f32;
             }
@@ -288,12 +312,14 @@ impl Playout {
 /// Inicia a reprodução do jitter buffer em um dispositivo de saída.
 ///
 /// `device_substring` seleciona o dispositivo pelo nome (ex.: `CABLE Input`);
-/// sem ele, usa o dispositivo padrão do sistema.
+/// sem ele, usa o dispositivo padrão do sistema. `controls` aplica mute/volume
+/// do PC no caminho quente do callback.
 ///
 /// Retorna o stream (que precisa ser mantido vivo) e o nome do dispositivo.
 pub fn start_output(
     device_substring: Option<&str>,
     buffer: Arc<Mutex<JitterBuffer>>,
+    controls: AudioControls,
     _frame_samples: usize, // mantido para compatibilidade; não usado
 ) -> Result<(Stream, String), DynError> {
     let host = cpal::default_host();
@@ -311,7 +337,7 @@ pub fn start_output(
     let stream = match sample_format {
         SampleFormat::I16 => {
             let config: StreamConfig = supported.into();
-            let mut playout = Playout::new(buffer_clone, &supported);
+            let mut playout = Playout::new(buffer_clone, &supported, controls);
             device.build_output_stream(
                 config,
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
@@ -323,7 +349,7 @@ pub fn start_output(
         }
         SampleFormat::F32 => {
             let config: StreamConfig = supported.into();
-            let mut playout = Playout::new(buffer_clone, &supported);
+            let mut playout = Playout::new(buffer_clone, &supported, controls);
             device.build_output_stream(
                 config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -338,6 +364,17 @@ pub fn start_output(
 
     stream.play()?;
     Ok((stream, device_name))
+}
+
+/// Aplica o ganho do PC a uma amostra i16 (fixed-point: 1000 = 100%).
+///
+/// Satura em vez de estourar quando o volume excede 100%. Seguro em tempo
+/// real: aritmética inteira, sem alocação.
+#[inline]
+#[must_use]
+fn apply_gain(sample: i16, gain: i32) -> i16 {
+    let scaled = i32::from(sample) * gain / super::VOLUME_UNITY as i32;
+    scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
 /// Nome legível do dispositivo.
@@ -360,4 +397,53 @@ fn select_device(host: &cpal::Host, device_substring: Option<&str>) -> Result<De
     host.output_devices()?
         .find(|device| device_name(device).to_lowercase().contains(&needle))
         .ok_or_else(|| format!("dispositivo de saída '{needle}' não encontrado").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::{AudioControls, VOLUME_UNITY};
+
+    #[test]
+    fn gain_unity_preserva_a_amostra() {
+        assert_eq!(apply_gain(12_345, VOLUME_UNITY as i32), 12_345);
+        assert_eq!(apply_gain(-12_345, VOLUME_UNITY as i32), -12_345);
+    }
+
+    #[test]
+    fn gain_zero_zera_a_amostra() {
+        assert_eq!(apply_gain(12_345, 0), 0);
+        assert_eq!(apply_gain(-32_768, 0), 0);
+    }
+
+    #[test]
+    fn gain_dobro_duplica_e_satura() {
+        assert_eq!(apply_gain(10_000, 2_000), 20_000);
+        // 32_767 × 2 satura no limite de i16, não estoura.
+        assert_eq!(apply_gain(i16::MAX, 2_000), i16::MAX);
+        assert_eq!(apply_gain(i16::MIN, 4_000), i16::MIN);
+    }
+
+    #[test]
+    fn controles_mute_zera_o_gain() {
+        let controls = AudioControls::new();
+        assert!(!controls.muted());
+        assert_eq!(controls.volume(), VOLUME_UNITY);
+
+        controls.set_mute(true);
+        assert!(controls.muted());
+
+        controls.set_mute(false);
+        assert!(!controls.muted());
+    }
+
+    #[test]
+    fn controles_volume_clampa_no_maximo() {
+        let controls = AudioControls::new();
+        controls.set_volume(9_999);
+        assert_eq!(controls.volume(), crate::audio::VOLUME_MAX);
+
+        controls.set_volume(500);
+        assert_eq!(controls.volume(), 500);
+    }
 }

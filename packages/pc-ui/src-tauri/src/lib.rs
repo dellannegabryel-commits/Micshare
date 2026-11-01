@@ -24,6 +24,8 @@ pub fn run() {
             commands::get_server_status,
             commands::get_discovery_status,
             commands::set_discovery_enabled,
+            commands::set_mute,
+            commands::set_volume,
             commands::list_output_devices,
             commands::start_discovery,
             commands::stop_discovery,

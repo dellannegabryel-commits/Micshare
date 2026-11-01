@@ -26,6 +26,8 @@ const EMPTY_STATS: ServerStats = {
   fps: 0,
   lossPct: 0,
   deviceName: '',
+  muted: false,
+  volume: 1000,
 };
 
 const DEFAULT_CONFIG: ServerConfig = {
@@ -277,6 +279,28 @@ export function useServer() {
     }
   }, []);
 
+  const setMute = useCallback(async (muted: boolean) => {
+    try {
+      await invoke('set_mute', { muted });
+      // Atualização otimista; o próximo `server-stats` confirma.
+      setStats(prev => ({ ...prev, muted }));
+      addLog('info', muted ? 'Reprodução mutada no PC.' : 'Reprodução desmutada no PC.');
+    } catch (e) {
+      setError(toCommandError(e, 'Falha ao alterar o mute'));
+    }
+  }, [addLog]);
+
+  const setVolume = useCallback(async (volume: number) => {
+    // Fixed-point: 0..=4000 (1000 = 100%).
+    const fixed = Math.max(0, Math.min(4000, Math.round(volume)));
+    try {
+      await invoke('set_volume', { volume: fixed });
+      setStats(prev => ({ ...prev, volume: fixed }));
+    } catch (e) {
+      setError(toCommandError(e, 'Falha ao alterar o volume'));
+    }
+  }, []);
+
   const refreshDevices = useCallback(async () => {
     try {
       const names = await invoke<string[]>('list_output_devices');
@@ -306,5 +330,7 @@ export function useServer() {
     startDiscovery,
     stopDiscovery,
     setDiscoveryEnabled,
+    setMute,
+    setVolume,
   };
 }
