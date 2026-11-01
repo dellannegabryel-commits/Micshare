@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use cpal::traits::StreamTrait;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
@@ -230,44 +231,72 @@ impl AudioPipeline {
 
     /// Troca o dispositivo de saída **em quente**, preservando o jitter buffer.
     ///
-    /// A troca é transacional:
-    /// 1. Abre o stream no novo dispositivo **antes** de derrubar o antigo —
-    ///    se falhar, o dispositivo atual continua tocando (nada muda).
-    /// 2. Só então para o sink antigo com `stop_and_join` (aguarda o drop do
-    ///    stream e a liberação do endpoint no WASAPI).
-    /// 3. Inicia o novo stream e atualiza o nome exposto na UI.
+    /// A troca é transacional e nunca deixa dois streams tocando:
+    /// 1. **Constrói** o stream do novo dispositivo, ainda pausado — se a
+    ///    abertura falhar (dispositivo inexistente, formato não suportado), o
+    ///    dispositivo atual continua tocando intacto.
+    /// 2. Derruba o sink antigo com `stop_and_join` (aguarda o drop do
+    ///    `cpal::Stream` e a liberação do endpoint no WASAPI).
+    /// 3. **Inicia** (`play`) o novo stream. Se o `play` falhar, reabre o
+    ///    dispositivo anterior (rollback) para o áudio não ficar mudo.
     ///
     /// O novo stream consome do **mesmo** `Arc<Mutex<JitterBuffer>>` alimentado
-    /// pela task UDP — sem reiniciar o servidor nem perder frames no meio da
-    /// troca (o buffer continua enfileirando enquanto o swap acontece).
+    /// pela task UDP — o servidor não reinicia e os frames continuam
+    /// enfileirando durante a troca (o jitter buffer absorve a janela).
     pub fn set_output_device(&self, device_substring: Option<&str>) -> Result<String, DynError> {
-        // 1) Abre o novo stream primeiro (o antigo segue tocando em paralelo
-        //    durante a abertura; só o novo consome do buffer após o play).
-        let opened = sink::start_output(
+        // 1) Constrói o novo stream (pausado — ainda não consome o buffer).
+        let (new_stream, new_name) = sink::build_output(
             device_substring,
             Arc::clone(&self.buffer),
             self.controls.clone(),
-            FRAME_SAMPLES,
-        );
+        )
+        .map_err(|err| format!("falha ao abrir o dispositivo '{device_substring:?}': {err}"))?;
 
-        let (new_stream, new_name) = match opened {
-            Ok(opened) => opened,
-            Err(err) => {
-                // Falhou abrir o novo: o sink antigo nunca foi tocado — a UI
-                // recebe o erro estruturado e o áudio continua no dispositivo
-                // atual.
-                return Err(
-                    format!("falha ao abrir o dispositivo '{device_substring:?}': {err}").into(),
-                );
-            }
-        };
-
-        // 2) Libera o dispositivo antigo de forma determinística.
+        // 2) Libera o dispositivo antigo de forma determinística (o endpoint
+        //    precisa estar livre antes de o novo stream tocar).
         if let Ok(mut sink) = self.sink.lock() {
             sink.stop_and_join();
         }
 
-        // 3) Assume o novo stream.
+        // 3) Inicia o novo stream.
+        if let Err(err) = new_stream.play() {
+            eprintln!("[áudio] falha ao iniciar '{new_name}': {err}; restaurando o anterior");
+
+            // Rollback: reabre o dispositivo anterior para o áudio não ficar mudo.
+            let previous = self
+                .requested_device
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone())
+                .or_else(|| Some(self.device_name()))
+                .filter(|name| !name.is_empty());
+
+            if let Some(previous) = previous {
+                if let Ok((old_stream, old_name)) = sink::build_output(
+                    Some(&previous),
+                    Arc::clone(&self.buffer),
+                    self.controls.clone(),
+                ) {
+                    if old_stream.play().is_ok() {
+                        let handle = SinkHandle::spawn(old_stream);
+                        if let Ok(mut sink) = self.sink.lock() {
+                            *sink = handle;
+                        }
+                        if let Ok(mut name) = self.device_name.write() {
+                            *name = old_name;
+                        }
+                        return Err(format!(
+                            "falha ao iniciar '{new_name}': {err} (dispositivo anterior restaurado)"
+                        )
+                        .into());
+                    }
+                }
+            }
+
+            return Err(format!("falha ao iniciar '{new_name}': {err}").into());
+        }
+
+        // 4) Assume o novo stream.
         let new_handle = SinkHandle::spawn(new_stream);
         if let Ok(mut sink) = self.sink.lock() {
             *sink = new_handle;

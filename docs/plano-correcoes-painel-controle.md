@@ -124,6 +124,56 @@ celular envia via WS.
 
 ---
 
+## Fase 6 — Hot-swap do dispositivo de saída + direcionamento a microfone
+
+> Adicionada após a Fase 5. Objetivo: trocar o dispositivo de saída **sem
+> reiniciar o servidor** e garantir que o áudio chegue a um dispositivo
+> **utilizável como microfone** (cabo virtual).
+
+### Backend
+
+17. **`audio/sink.rs` — separação build/play**
+    - `build_output()` constrói o stream **pausado**; `start_output()` = build + play.
+    - Necessário para o hot-swap: os dois streams nunca consomem o jitter
+      buffer ao mesmo tempo.
+18. **`audio/sink.rs` — seleção por score**
+    - `device_score()`: exato (100) > prefixo (80) > substring (60); desempate
+      estável por índice.
+    - `is_virtual_cable()` / `preferred_virtual_cable_name()`: detecta o cabo
+      virtual (`CABLE Input`, `VB-Audio`, `VoiceMeeter`) e prefere a variante
+      estéreo sobre a multicanal (`CABLE In 16ch`).
+    - `select_device()` sem escolha explícita: **cabo virtual primeiro**, depois
+      o padrão do sistema. É o que faz o áudio chegar como mic no Discord/OBS.
+    - `OutputDevice` ganha `is_virtual_cable` (serde → `isVirtualCable`).
+19. **`audio/mod.rs` — hot-swap transacional**
+    - `SinkHandle` guarda o `JoinHandle` da thread do stream; `stop_and_join()`
+      aguarda o drop real do `cpal::Stream` (libera o endpoint no WASAPI).
+    - `set_output_device()`:
+      1. `build_output` no novo (falha → dispositivo atual intacto);
+      2. `stop_and_join` no antigo (libera o endpoint);
+      3. `play` no novo (falha → **rollback** reabre o anterior);
+      4. atualiza nome/estado expostos.
+20. **`commands.rs` / `state.rs` / `lib.rs`**
+    - Comando `set_active_sink(device_name: Option<String>) -> String`.
+    - `AppState::set_output_device` roda o swap em `spawn_blocking` (não trava o
+      runtime do Tauri); erros → `audioDeviceError` / `serverNotRunning`.
+
+### Frontend
+
+21. **`types/index.ts`** — `AudioDevice.isVirtualCable`.
+22. **`DeviceSelector.tsx`** — badge "microfone virtual", estado da saída ativa
+    com orientação ("no Discord/OBS selecione CABLE Output"), e aviso +
+    atalho de instalação do VB-Cable quando não há cabo virtual.
+23. **`App.tsx`** — banner de VB-Cable duplicado removido (fica no seletor).
+
+### Validação
+
+- `cargo run --example hot_swap` valida a troca real e o rollback:
+  troca válida OK; troca inválida rejeitada **sem** derrubar a saída ativa.
+- `tauri:dev` → `[áudio] saída: CABLE Input (VB-Audio Virtual Cable)`.
+
+---
+
 ## Fora do escopo imediato (conhecido, anotado)
 
 - Android: mute não silencia o envio (só sinaliza flag) — decisão de produto

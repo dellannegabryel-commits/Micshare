@@ -32,6 +32,86 @@ pub struct OutputDevice {
     pub name: String,
     /// `true` se for o dispositivo padrão do sistema.
     pub is_default: bool,
+    /// `true` se o dispositivo é um cabo virtual de áudio — ou seja, pode ser
+    /// capturado por outros apps (Discord/OBS/Zoom) como microfone.
+    pub is_virtual_cable: bool,
+}
+
+/// Marcadores de nome que identificam um cabo virtual de áudio.
+///
+/// No Windows o VB-Cable expõe o lado de **playback** (onde o PC escreve) como
+/// `CABLE Input` e o lado de **recording** (o que o Discord/OBS captura) como
+/// `CABLE Output`. O Micshare escreve em `CABLE Input`; o par `CABLE Output`
+/// aparece como microfone nos apps de captura.
+const VIRTUAL_CABLE_MARKERS: &[&str] = &[
+    "cable input",
+    "vb-audio",
+    "vb-cable",
+    "virtual audio cable",
+    "virtual cable",
+    "voicemeeter",
+];
+
+/// `true` se o dispositivo de saída é um cabo virtual (usável como microfone).
+///
+/// O PC escreve o áudio do celular nesse dispositivo; o outro par do cabo
+/// (`CABLE Output`) aparece como microfone nos apps de gravação.
+#[must_use]
+pub fn is_virtual_cable(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    VIRTUAL_CABLE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+/// `true` se o dispositivo é a variante multicanal do cabo (ex.: `CABLE In 16ch`).
+///
+/// A variante 16ch serve para gravação multicanal profissional, mas o par
+/// correspondente no outro lado não é o microfone padrão que os apps esperam.
+#[must_use]
+fn is_multichannel_variant(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains("16ch") || lower.contains("multichannel")
+}
+
+/// Pontua um dispositivo como candidato a um pedido de seleção.
+///
+/// Nome exato > prefixo > substring. A pontuação permite desempate estável
+/// quando vários dispositivos casam com o mesmo texto.
+fn device_score(name: &str, needle: &str) -> Option<u32> {
+    let name_lower = name.to_lowercase();
+    let needle_lower = needle.to_lowercase();
+
+    if name_lower == needle_lower {
+        Some(100)
+    } else if name_lower.starts_with(&needle_lower) {
+        Some(80)
+    } else if name_lower.contains(&needle_lower) {
+        Some(60)
+    } else {
+        None
+    }
+}
+
+/// Nome do cabo virtual de playback preferencial (o que o PC deve usar).
+///
+/// Prioriza `CABLE Input` estéreo sobre variantes multicanal (`CABLE In
+/// 16ch`): o par correspondente (`CABLE Output`) é o que o Discord/OBS
+/// captura como microfone comum.
+#[must_use]
+pub fn preferred_virtual_cable_name(names: &[String]) -> Option<String> {
+    let candidates: Vec<&String> = names.iter().filter(|name| is_virtual_cable(name)).collect();
+
+    candidates
+        .iter()
+        .filter(|name| !is_multichannel_variant(name))
+        .max_by_key(|name| device_score(name, "cable input").unwrap_or(0))
+        .or_else(|| {
+            candidates
+                .iter()
+                .max_by_key(|name| device_score(name, "cable input").unwrap_or(0))
+        })
+        .map(|name| (*name).clone())
 }
 
 /// Lista os dispositivos de saída do host padrão de áudio.
@@ -49,6 +129,7 @@ pub fn output_devices() -> Result<Vec<OutputDevice>, DynError> {
             let is_default = default_name.as_deref() == Some(name.as_str());
             OutputDevice {
                 index,
+                is_virtual_cable: is_virtual_cable(&name),
                 name,
                 is_default,
             }
@@ -309,18 +390,18 @@ impl Playout {
     }
 }
 
-/// Inicia a reprodução do jitter buffer em um dispositivo de saída.
+/// Constrói o stream de saída no dispositivo, **sem iniciar a reprodução**.
 ///
-/// `device_substring` seleciona o dispositivo pelo nome (ex.: `CABLE Input`);
-/// sem ele, usa o dispositivo padrão do sistema. `controls` aplica mute/volume
-/// do PC no caminho quente do callback.
+/// Separar a construção do `play()` é o que permite o hot-swap transacional:
+/// o novo stream é aberto (validando o dispositivo e sua configuração) enquanto
+/// o antigo ainda toca; só depois o antigo é derrubado e o novo é iniciado.
+/// Assim os dois streams nunca consomem o jitter buffer ao mesmo tempo.
 ///
 /// Retorna o stream (que precisa ser mantido vivo) e o nome do dispositivo.
-pub fn start_output(
+pub fn build_output(
     device_substring: Option<&str>,
     buffer: Arc<Mutex<JitterBuffer>>,
     controls: AudioControls,
-    _frame_samples: usize, // mantido para compatibilidade; não usado
 ) -> Result<(Stream, String), DynError> {
     let host = cpal::default_host();
     let device = select_device(&host, device_substring)?;
@@ -362,6 +443,23 @@ pub fn start_output(
         other => return Err(format!("formato de saída não suportado: {other}").into()),
     };
 
+    Ok((stream, device_name))
+}
+
+/// Inicia a reprodução do jitter buffer em um dispositivo de saída.
+///
+/// `device_substring` seleciona o dispositivo pelo nome (ex.: `CABLE Input`);
+/// sem ele, usa o dispositivo padrão do sistema. `controls` aplica mute/volume
+/// do PC no caminho quente do callback.
+///
+/// Retorna o stream (que precisa ser mantido vivo) e o nome do dispositivo.
+pub fn start_output(
+    device_substring: Option<&str>,
+    buffer: Arc<Mutex<JitterBuffer>>,
+    controls: AudioControls,
+    _frame_samples: usize, // mantido para compatibilidade; não usado
+) -> Result<(Stream, String), DynError> {
+    let (stream, device_name) = build_output(device_substring, buffer, controls)?;
     stream.play()?;
     Ok((stream, device_name))
 }
@@ -386,17 +484,44 @@ fn device_name(device: &Device) -> String {
 }
 
 /// Seleciona o dispositivo de saída pelo nome.
+///
+/// Sem `device_substring`, a preferência é:
+/// 1. o **cabo virtual** (`CABLE Input`) — é o único destino cujo par aparece
+///    como microfone no Discord/OBS/Zoom, que é o propósito do Micshare;
+/// 2. o dispositivo padrão do sistema.
+///
+/// Com `device_substring`, procura por correspondência exata → prefixo →
+/// substring, escolhendo sempre o melhor score (desempate estável).
 fn select_device(host: &cpal::Host, device_substring: Option<&str>) -> Result<Device, DynError> {
+    let devices: Vec<Device> = host.output_devices()?.collect();
+    let names: Vec<String> = devices.iter().map(device_name).collect();
+
     let Some(needle) = device_substring else {
+        // Sem escolha explícita: prefere o cabo virtual para que o áudio já
+        // chegue como microfone nos apps de captura.
+        let preferred = preferred_virtual_cable_name(&names);
+        if let Some(preferred) = preferred {
+            if let Some(index) = names.iter().position(|name| *name == preferred) {
+                return Ok(devices[index].clone());
+            }
+        }
+
         return host
             .default_output_device()
             .ok_or_else(|| "nenhum dispositivo de saída disponível".into());
     };
 
-    let needle = needle.to_lowercase();
-    host.output_devices()?
-        .find(|device| device_name(device).to_lowercase().contains(&needle))
-        .ok_or_else(|| format!("dispositivo de saída '{needle}' não encontrado").into())
+    // Melhor score entre os dispositivos que casam com o pedido.
+    let best = names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| device_score(name, needle).map(|score| (score, index)))
+        .max_by_key(|(score, index)| (*score, std::cmp::Reverse(*index)));
+
+    match best {
+        Some((_, index)) => Ok(devices[index].clone()),
+        None => Err(format!("dispositivo de saída '{needle}' não encontrado").into()),
+    }
 }
 
 #[cfg(test)]
@@ -445,5 +570,50 @@ mod tests {
 
         controls.set_volume(500);
         assert_eq!(controls.volume(), 500);
+    }
+
+    #[test]
+    fn detecta_cabo_virtual_por_nome() {
+        assert!(is_virtual_cable("CABLE Input (VB-Audio Virtual Cable)"));
+        assert!(is_virtual_cable("CABLE In 16ch (VB-Audio Virtual Cable)"));
+        assert!(is_virtual_cable("VoiceMeeter Output"));
+        assert!(!is_virtual_cable("Fones de ouvido (2- JBL Tune 720BT)"));
+        assert!(!is_virtual_cable(
+            "4 - AAA (AMD High Definition Audio Device)"
+        ));
+    }
+
+    #[test]
+    fn prefere_cable_input_estereo_sobre_multicanal() {
+        let names = vec![
+            "Fones de ouvido (2- JBL Tune 720BT)".to_owned(),
+            "CABLE In 16ch (VB-Audio Virtual Cable)".to_owned(),
+            "CABLE Input (VB-Audio Virtual Cable)".to_owned(),
+        ];
+
+        assert_eq!(
+            preferred_virtual_cable_name(&names),
+            Some("CABLE Input (VB-Audio Virtual Cable)".to_owned())
+        );
+    }
+
+    #[test]
+    fn sem_cabo_virtual_retorna_none() {
+        let names = vec![
+            "Fones de ouvido (2- JBL Tune 720BT)".to_owned(),
+            "4 - AAA (AMD High Definition Audio Device)".to_owned(),
+        ];
+        assert_eq!(preferred_virtual_cable_name(&names), None);
+    }
+
+    #[test]
+    fn score_prefere_exato_sobre_prefixo_sobre_substring() {
+        assert_eq!(device_score("CABLE Input", "CABLE Input"), Some(100));
+        assert_eq!(
+            device_score("CABLE Input (VB-Audio)", "CABLE Input"),
+            Some(80)
+        );
+        assert_eq!(device_score("VB CABLE Input", "CABLE Input"), Some(60));
+        assert_eq!(device_score("JBL Tune", "CABLE Input"), None);
     }
 }

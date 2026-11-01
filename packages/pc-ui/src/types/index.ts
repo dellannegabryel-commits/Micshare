@@ -33,6 +33,12 @@ export interface JitterMetrics {
 export interface AudioDevice {
   name: string;
   isDefault: boolean;
+  /**
+   * `true` se o dispositivo é um cabo virtual de áudio (VB-Cable, VoiceMeeter).
+   * É nele que o áudio deve ser direcionado para ser capturado como
+   * microfone pelo Discord/OBS/Zoom.
+   */
+  isVirtualCable: boolean;
 }
 
 export interface LogEntry {
