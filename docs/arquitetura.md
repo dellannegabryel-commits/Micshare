@@ -1,6 +1,6 @@
 # Arquitetura — Micshare (microfone P2P em rede local)
 
-Versão 0.1 · escopo de MVP · complementa `documenta_o_de_arquitetura_microfone_p2p.md` (briefing original), ao qual corrige nos pontos marcados com **Δ**.
+Versão 0.1 · escopo de MVP · complementa `docs/documenta_o_de_arquitetura_microfone_p2p.md` (briefing original), ao qual corrige nos pontos marcados com **Δ**.
 
 ## 1. Objetivo
 
@@ -156,37 +156,40 @@ Meta do MVP: **< 150 ms** medido pela metodologia da Sprint 1. Referência: AirP
 
 ```
 Micshare/
-├── documenta_o_de_arquitetura_microfone_p2p.md   # briefing original
 ├── docs/
 │   ├── arquitetura.md        # este documento
 │   ├── roadmap.md            # fases e gates
-│   └── sprint-01.md          # plano da sprint corrente
-└── packages/
-    ├── protocol/             # header binário, encode/decode, validação, testes (TypeScript)
-    │   └── src/{audioFrame.ts,ctrl.ts}
-    ├── pc/                   # servidor legacy (Node.js/TypeScript) — deprecated
-    │   └── src/{index.ts,discovery.ts,control.ts,audioServer.ts,jitterBuffer.ts,sink.ts}
-    └── pc-ui/                # servidor PC principal (Rust + Tauri 3) — binário nativo
-        ├── src/              # React 18 + TypeScript + Vite frontend
-        │   ├── components/
-        │   ├── hooks/
-        │   └── types/
-        └── src-tauri/        # Rust backend
-            ├── src/
-            │   ├── audio/mod.rs      # JitterBuffer, AudioSink (cpal), AudioCapture
-            │   ├── control/mod.rs    # WebSocket control server
-            │   ├── discovery/mod.rs  # UDP beacon sender/listener
-            │   ├── protocol/mod.rs   # Binary protocol (AudioFrameHeader, CtrlMessage)
-            │   ├── server.rs         # MicshareServer orchestration
-            │   ├── commands.rs       # Tauri commands
-            │   ├── lib.rs            # Library entry point
-            │   └── main.rs           # App entry point
-            ├── tauri.conf.json       # Tauri config
-            └── Cargo.toml            # Rust dependencies
+│   ├── latencia.md           # metodologia de medição de latência
+│   └── documenta_o_de_arquitetura_microfone_p2p.md   # briefing original
+├── pc/                       # servidor PC principal (Rust + Tauri 2) — binário nativo
+│   ├── src/                  # React 18 + TypeScript + Vite frontend
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   └── types/
+│   └── src-tauri/            # Rust backend
+│       ├── src/
+│       │   ├── audio/mod.rs      # JitterBuffer, AudioSink (cpal), AudioCapture
+│       │   ├── control/mod.rs    # WebSocket control server
+│       │   ├── discovery/mod.rs  # UDP beacon sender/listener
+│       │   ├── protocol/mod.rs   # Binary protocol (AudioFrameHeader, CtrlMessage)
+│       │   ├── server.rs         # MicshareServer orchestration
+│       │   ├── commands.rs       # Tauri commands
+│       │   ├── lib.rs            # Library entry point
+│       │   └── main.rs           # App entry point
+│       ├── tauri.conf.json       # Tauri config
+│       └── Cargo.toml            # Rust dependencies
+├── mobile/                   # cliente Android nativo (Kotlin + Jetpack Compose)
+│   └── app/src/main/java/com/micshare/
+│       ├── audio/                 # AudioRecord + AudioCaptureService (foreground)
+│       ├── network/               # AudioSender (UDP), ControlClient (WS), BeaconListener
+│       ├── protocol/              # header e mensagens de controle (espelho do Rust)
+│       ├── ui/                    # Compose: MainScreen, DiscoverySection, SessionSection
+│       └── viewmodel/             # MainViewModel (descoberta → sessão → streaming)
+└── protocol/                 # header binário, encode/decode, validação, testes (TypeScript)
+    └── src/{audioFrame.ts,ctrl.ts}
 ```
 
-`packages/pc` (legacy) roda como CLI (`npm --prefix packages/pc run dev`) mas está deprecated.
-`packages/pc-ui` é o servidor principal: `npm --prefix packages/pc-ui run tauri:dev` para desenvolvimento, `npm --prefix packages/pc-ui run tauri:build` gera instaladores MSI/NSIS.
+`pc/` é o servidor principal: `npm --prefix pc run tauri:dev` para desenvolvimento, `npm --prefix pc run tauri:build` gera instaladores MSI/NSIS.
 Não começamos por UI: a UI de um app de áudio é uma tela com 3 controles, o risco está no áudio.
 
 ### Cliente Mobile (Fase 2+)
@@ -203,7 +206,7 @@ O cliente mobile será nativo **Kotlin (Android)** com Jetpack Compose, não Rea
 
 Arquitetura Android (planejada):
 ```
-mobile-android/
+mobile/
 ├── app/src/main/java/com/micshare/
 │   ├── audio/          # AudioRecord capture → 10 ms PCM frames
 │   ├── transport/      # DatagramSocket UDP sender + NetworkCallback
@@ -252,7 +255,7 @@ No MVP:
 
 ## 13. Testes
 
-- **Unitário (obrigatório):** `packages/protocol` — encode/decode round-trip, rejeição de magic/versão/len inválidos; `jitterBuffer` com relógio fake cobrindo reordenação, gap, burst de perda, underrun e flush por profundidade.
+- **Unitário (obrigatório):** `protocol` — encode/decode round-trip, rejeição de magic/versão/len inválidos; `jitterBuffer` com relógio fake cobrindo reordenação, gap, burst de perda, underrun e flush por profundidade.
 - **Integração local:** servidor UDP + cliente fake em `127.0.0.1` enviando 500 frames, assert de frames recebidos / gaps contados / buffer estabilizado.
 - **Simulação de rede ruim:** variável `MICSHARE_DROP_PCT=5` e `MICSHARE_JITTER_MS=15` no cliente fake — sem depender de `tc/netem` (não existe no Windows).
-- **Manual cross-device:** checklist em `docs/sprint-01.md`, com evidência (log de stats, gravação do áudio no PC).
+- **Manual cross-device:** checklist em `docs/sprint-01-resultado.md`, com evidência (log de stats, gravação do áudio no PC).

@@ -1,7 +1,5 @@
 packages:
-  - packages/*
-  - mobile
+  - pc
+  - protocol
 allowBuilds:
   esbuild: true
-  naudiodon2: true
-  segfault-handler: true

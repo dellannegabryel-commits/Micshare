@@ -8,6 +8,10 @@ dist/
 build/
 *.apk
 *.aab
+*.tsbuildinfo
+
+# Gradle
+.gradle/
 
 # Rust
 target/
@@ -51,5 +55,5 @@ keystore-base64.txt
 generate-keystore.sh
 
 # Android local properties (contains signing keys)
-mobile-android/local.properties
-mobile-android/gradle.properties
+mobile/local.properties
+mobile/gradle.properties

@@ -1,207 +1,210 @@
 # Micshare
 
-**O celular vira o microfone do PC pela rede local**, com baixa latência e sem
-cabo. O áudio do celular chega ao PC e é injetado num cabo de áudio virtual,
-aparecendo como microfone no Discord, OBS, Zoom e jogos.
+O celular vira microfone do PC pela rede local: baixa latência, descoberta automática e o PC enxerga um microfone normal — funciona em Discord, OBS, jogos e reuniões sem plugin.
 
 ```
-Celular (Android)  ──UDP 41235──▶  Servidor PC (Rust + Tauri 2)  ──cpal──▶  CABLE Input  ──▶  CABLE Output  ──▶  Discord / OBS / Zoom
-                          ▲                                                                       (microfone)
-                          └── controle WS 41236 (hello/welcome/stats) ──┘
-                     beacon UDP 41234 (descoberta)
+Android (Kotlin + Compose)  ──UDP 41235 (áudio)──▶  PC (Rust + Tauri 2)  ──cpal──▶  VB-Cable  ──▶  Discord / OBS / jogos
+        │                            ▲
+        └──WS 41236 (controle)──────┘
+                     ▲
+        PC ──UDP 41234 (beacon broadcast, 1 Hz)──▶ Android (descoberta)
 ```
 
-Servidor PC em **Rust + Tauri 2**, app Android em **Kotlin + Jetpack Compose**.
+- **PC:** app nativo em Rust + Tauri 2 (UI em React 18 + Vite + Tailwind). Instala como MSI ou NSIS.
+- **Android:** app em Kotlin + Jetpack Compose. Captura via `AudioRecord`, envia por `DatagramSocket`, controle por WebSocket (Ktor).
+- **Áudio:** PCM s16le, 48 kHz mono, frames de 10 ms (480 amostras / 960 B), um datagrama UDP por frame.
 
----
+## Releases
 
-## 📥 Download
+Baixe os artefatos em [github.com/dellannegabryel-commits/Micshare/releases](https://github.com/dellannegabryel-commits/Micshare/releases).
 
-| Versão | Arquivo | Plataforma |
-|---|---|---|
-| [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0) | `micshare-pc.exe` | Windows 10/11 x64 |
-| [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0) | `Micshare_0.3.0_x64-setup.exe` | Windows (instalador) |
-| [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0) | `app-debug.apk` | Android 6.0+ (API 23) |
+| Artefato | Plataforma |
+|---|---|
+| `Micshare-<versão>.apk` | Android (minSdk 23 / Android 6.0+) |
+| `Micshare-<versão>_x64-setup.exe` | Windows (NSIS) |
+| `Micshare-<versão>_x64.msi` | Windows (MSI) |
 
-### 🔌 VB-Cable — obrigatório para usar como microfone
+O CI (`.github/workflows/release.yml`) compila APK, MSI e NSIS a cada tag `v*.*.*` e anexa os três artefatos na release. A versão atual é `0.3.0`; a última publicada é [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0).
 
-O Micshare entrega o áudio no **cabo virtual**. Sem ele, não existe como
-transformar o celular em microfone.
+### Publicar uma release
 
-**➜ Download direto (Windows): https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip**
+1. Sincronize a versão em todos os manifests (uma fonte de verdade):
 
-Página oficial e instruções: **https://vb-audio.com/Cable/**
+   ```bash
+   node scripts/set-version.mjs 0.4.0
+   node scripts/set-version.mjs --check 0.4.0   # só verifica
+   ```
 
-> Extraia o ZIP e execute o instalador **como administrador**.
-> **Reinicie o Windows** após instalar.
-> O VB-Cable é *donationware*: a instalação é gratuita, a VB-Audio aceita doações.
+   O script atualiza `Cargo.toml` (somente a seção `[package]`), `Cargo.lock`,
+   `tauri.conf.json`, `pc/package.json`, `package.json`, `package-lock.json` e
+   `build.gradle.kts` (`versionName` + `versionCode`).
 
-Alternativas: **PipeWire** (Linux), **BlackHole** (macOS), **VoiceMeeter** (Windows).
+2. Faça o merge para a `main` e crie a tag:
 
----
+   ```bash
+   git tag -a v0.4.0 -m "Micshare v0.4.0"
+   git push origin main v0.4.0
+   ```
 
-## 🚀 Como usar
+   O CI só publica se a release da tag **ainda não existir** — se já existir,
+   ele apenas gera os artefatos e não altera nada no GitHub.
 
-1. **Instale o VB-Cable** (link acima) e reinicie o Windows.
-2. **Execute o `micshare-pc.exe`** — o servidor sobe automaticamente (auto-start),
-   com o cabo virtual já selecionado.
-3. **Instale o `app-debug.apk`** no celular (permita instalar de fontes
-   desconhecidas) e abra o Micshare.
-4. No Discord/OBS/Zoom, selecione **CABLE Output** como microfone.
-5. Conecte e fale — o PC passa a ouvir o celular.
+3. Para testar o pipeline sem publicar nada: **Actions → Release → Run
+   workflow**, com `publish` desmarcado (dry-run: gera os artefatos, não cria
+   a release).
 
-### Por que "CABLE Input" e "CABLE Output"?
+## Como usar
 
-O VB-Cable é um par de endpoints: o áudio que entra no **CABLE Input** (lado de
-playback, onde o Micshare escreve) é encaminhado para o **CABLE Output** (lado de
-recording, que os apps capturam como microfone).
+**1. No PC — instale o cabo virtual.** O Micshare escreve o áudio no lado de *playback* do cabo; o par aparece como microfone no sistema:
 
+- Windows: [VB-Cable](https://vb-audio.com/Cable/) (o app tem um atalho que abre a página oficial).
+- Linux: PipeWire · macOS: BlackHole.
+
+Requer reiniciar o PC após instalar o driver. Sem o cabo virtual não há como o celular virar microfone.
+
+**2. No PC — rode o app.** Instale o MSI/EXE e abra o Micshare. O servidor sobe sozinho (descoberta + controle + áudio). No seletor de dispositivos, escolha a entrada `CABLE Input` — o app detecta o cabo virtual e o prefere automaticamente.
+
+**3. No Android — instale e conecte.** Instale o APK, abra o app e toque em **Conectar** no PC listado na seção *Servidores na rede*. A captura começa em um serviço de foreground, com notificação persistente.
+
+**4. No Discord/OBS — selecione o microfone.** Escolha `CABLE Output` (VB-Audio) como microfone. O PC passa a tratar o celular como qualquer outro microfone.
+
+## Protocolo
+
+Três canais independentes, cada um com a garantia que precisa:
+
+| Canal | Porta | Formato | Uso |
+|---|---|---|---|
+| Descoberta | UDP 41234 | JSON (beacon ≤ 200 B) | PC anuncia a 1 Hz; celular escuta. Fallback: celular envia `{"t":"probe"}` e o PC responde em unicast |
+| Áudio | UDP 41235 | header binário 16 B + PCM s16le | Um datagrama por frame de 10 ms |
+| Controle | WS 41236 | JSON | Handshake `hello` → `welcome`, mute/volume, `bye`, `stats` a 1 Hz |
+
+**Header de áudio** — 16 bytes big-endian (`docs/arquitetura.md` §3.2):
+
+| Offset | Tam. | Campo | Notas |
+|---|---|---|---|
+| 0 | 2 | `magic` | `0x4D53` ("MS") — descarta pacote de outra app |
+| 2 | 1 | `version` | `1` |
+| 3 | 1 | `flags` | bit0 = SILENCE, bit1 = MUTED |
+| 4 | 4 | `seq` | u32, +1 por frame |
+| 8 | 4 | `capture_ts` | u32, ms do relógio do celular |
+| 12 | 2 | `payload_len` | u16, validado contra o datagrama |
+| 14 | 1 | `channels` | `1` (mono) |
+| 15 | 1 | `codec` | `0` = PCM s16le, `1` = Opus |
+
+**Jitter buffer** (PC): ring buffer com alvo adaptativo de 2–10 frames, PLC por *zero-order hold*, *fast-forward* quando a fila estoura e *flush* acima de 250 ms. É ele que transforma o jitter do Wi-Fi em áudio estável.
+
+## Desenvolvimento
+
+Pré-requisitos: Node 22+ (é o que o CI usa), Rust 1.85+ (edition 2024), JDK 17, Android SDK 35.
+
+### App do PC (Rust + Tauri)
+
+```bash
+npm --prefix pc install
+npm --prefix pc run tauri:dev      # app completo em modo dev (frontend + Rust)
+npm --prefix pc run build          # build do frontend (tsc + vite)
+npm --prefix pc run tauri:build    # gera MSI + NSIS
 ```
-Micshare ──escreve──▶ CABLE Input ═══(cabo virtual)═══▶ CABLE Output ──▶ app captura como mic
+
+Backend Rust isolado:
+
+```bash
+cd pc/src-tauri
+cargo test                                    # 71 testes
+cargo run --example serve                     # servidor sem UI (beacon + controle + áudio)
+cargo run --example devices                   # lista os dispositivos de saída
+cargo run --example hot_swap                  # valida a troca de dispositivo + rollback
+cargo run --example discovery_probe           # testa o probe unicast de descoberta
 ```
-
-O Micshare detecta o cabo automaticamente e o **prefere ao dispositivo padrão do
-sistema** — sem isso o áudio iria para os alto-falantes/fones, e não viraria
-microfone.
-
----
-
-## ✨ Funcionalidades
-
-### Servidor PC (Rust + Tauri 2)
-
-- **Painel de controle funcional** — mute e volume do PC aplicados no callback
-  de tempo real do `cpal` (ganho por amostra, fixed-point `0..=4000`, com
-  saturação em i16). Estado refletido ao vivo nas estatísticas.
-- **Hot-swap do dispositivo de saída** — troca o stream sem reiniciar o
-  servidor, de forma transacional: constrói o novo stream pausado → derruba o
-  antigo (aguardando o drop real, que libera o endpoint no WASAPI) → inicia o
-  novo. **Rollback** se falhar, para o áudio nunca ficar mudo.
-- **Seleção inteligente de dispositivo** — nome exato > prefixo > substring, com
-  desempate estável; detecta `CABLE Input` / `VB-Audio` / `VoiceMeeter`.
-- **Descoberta por beacon** — o celular encontra o PC automaticamente na LAN.
-- **Estatísticas ao vivo** — FPS, perda, profundidade do jitter buffer, gaps,
-  underruns, reconexões, sessões conectadas.
-- **Shutdown determinístico** — parar e iniciar de novo não gera `portInUse`.
-- **Erros estruturados** — `{ code, message }` com códigos estáveis
-  (`portInUse`, `audioDeviceError`, `serverNotRunning`, …).
-- **Auto-start** — o servidor sobe junto com o app.
 
 ### App Android (Kotlin + Compose)
 
-- Captura de áudio real (PCM 48 kHz / mono) e envio por UDP.
-- Handshake `hello` → `welcome` com o protocolo canônico JSON.
-- Mute e volume enviados ao PC pelo canal de controle.
-- Descoberta do PC na LAN e serviço de captura em foreground com notificação.
-
----
-
-## 🧱 Protocolo
-
-Protocolo canônico único PC↔celular, em JSON (controle) e datagramas UDP
-(audio). Detalhes em [`docs/arquitetura.md`](docs/arquitetura.md).
-
-| Porta | Transporte | Função |
-|---|---|---|
-| `41234` | UDP | beacon de descoberta (`Beacon`) |
-| `41235` | UDP | frames de áudio do celular |
-| `41236` | WebSocket | controle: `hello`/`welcome`/`stats`/`mute`/`volume`/`bye`/`error` |
-
-**Header de áudio** — 16 bytes Big-Endian, magic `0x4D53`, seguido de PCM
-`s16le` little-endian:
-
-```
-┌──────────┬───────────┬───────────┬──────────┬──────────┬───────────┐
-│ magic    │ seq       │ capture_ts│ length   │ codec    │ channels  │
-│ u16      │ u32       │ u32       │ u16      │ u8       │ u8        │
-└──────────┴───────────┴───────────┴──────────┴──────────┴───────────┘
+```bash
+cd mobile
+./gradlew :app:assembleDebug                  # APK de debug
+./gradlew :app:installDebug                   # instala no dispositivo conectado
+./gradlew :app:assembleRelease                # APK de release (assinado)
+./gradlew :app:test                           # testes unitários
 ```
 
----
+### Protocolo em TypeScript (referência)
 
-## 🛠️ Desenvolvimento
-
-Pré-requisitos: **Rust 1.85+**, **Node 20+**, **JDK 21**, **Android SDK 35**.
-
-### Servidor PC
+O servidor em produção é o Rust (`pc/`). O pacote `protocol/` mantém a implementação de referência do protocolo em TypeScript, usada como espelho legível e como suíte de testes.
 
 ```bash
-cd packages/pc-ui
-
-npm install
-npm run tauri:dev        # app em modo dev (auto-start do servidor)
-npm run tauri:build      # build de release: .exe + instaladores NSIS/MSI
-
-# testes e lint do backend Rust
-cd src-tauri
-cargo test
-cargo clippy --all-targets
-cargo fmt --all
-
-# diagnósticos
-cargo run --example devices   # lista dispositivos de saída e seus formatos
-cargo run --example hot_swap   # testa o hot-swap e o rollback
-cargo run --example serve      # servidor sem UI
+npm --prefix protocol run build && npm --prefix protocol run test   # 23 testes
 ```
 
-### App Android
+## Stack
 
-```bash
-cd mobile-android
-gradle assembleDebug        # mobile-android/app/build/outputs/apk/debug/app-debug.apk
-gradle installDebug         # instala no dispositivo conectado
-```
+| Camada | Tecnologias |
+|---|---|
+| **PC — backend** | Rust 1.85 (edition 2024), Tauri 2.12, tokio, tokio-tungstenite, cpal 0.18, byteorder, serde |
+| **PC — frontend** | React 18, TypeScript, Vite 5, Tailwind 3, lucide-react, tauri-plugin-store (config persistida) |
+| **Android** | Kotlin 1.9.24, Jetpack Compose (BOM 2024.08), Material 3, kotlinx-serialization, DataStore, Ktor 2.3 (WebSocket), Gradle 8.13 |
+| **Áudio (PC)** | cpal — WASAPI no Windows, CoreAudio no macOS, ALSA/PipeWire no Linux |
+| **Áudio (Android)** | `AudioRecord` → frames PCM s16le de 10 ms; serviço de foreground tipo `microphone` |
 
-> Sem `gradlew.bat` no repositório: use o Gradle do sistema ou o distribution
-> em `~/.gradle/wrapper/dists/gradle-8.13-all/`.
-
----
-
-## 📁 Estrutura
+## Estrutura do repositório
 
 ```
-packages/pc-ui/           Servidor PC — Tauri 2 + React + TypeScript
-  src-tauri/src/
-    audio/                Pipeline: jitter buffer, reamostragem, sink cpal
-    control/              Servidor WebSocket (sessões, mute/volume do celular)
-    discovery/            Beacon UDP
-    protocol/             Protocolo canônico (JSON + header de áudio)
-    commands.rs           Comandos Tauri expostos à UI
-    server.rs             Orquestra os 3 subsistemas + ServerStats
-    state.rs              Estado compartilhado (Tauri State)
-mobile-android/           App Android — Kotlin + Compose
-docs/                     Arquitetura, roadmap, latência, planos
+Micshare/
+├── pc/                            # servidor PC principal (Rust + Tauri 2)
+│   ├── src/                       # frontend React: App.tsx, components/, hooks/, types/
+│   └── src-tauri/
+│       ├── src/
+│       │   ├── audio/             # jitter.rs, sink.rs (cpal), resample.rs
+│       │   ├── control/           # servidor WebSocket de controle
+│       │   ├── discovery/         # beacon UDP (broadcast + probe unicast)
+│       │   ├── protocol/          # header binário e mensagens de controle
+│       │   ├── server.rs          # orquestração do MicshareServer
+│       │   ├── commands.rs        # comandos Tauri expostos à UI
+│       │   └── state.rs           # AppState (ciclo de vida do servidor)
+│       ├── examples/              # serve, devices, hot_swap, discovery_probe
+│       ├── tauri.conf.json
+│       └── Cargo.toml
+├── mobile/                        # app cliente Android (Kotlin + Compose)
+│   └── app/src/main/java/com/micshare/
+│       ├── audio/                 # AudioRecord + AudioCaptureService (foreground)
+│       ├── network/               # AudioSender (UDP), ControlClient (WS), BeaconListener
+│       ├── protocol/              # header e mensagens de controle (espelho do Rust)
+│       ├── ui/                   # Compose: MainScreen, DiscoverySection, SessionSection
+│       └── viewmodel/             # MainViewModel (descoberta → sessão → streaming)
+├── protocol/                      # protocolo de referência em TypeScript (espelho + testes)
+├── assets/
+│   └── icon-source.png            # master do ícone (1024x1024) — fonte de todos os derivados
+├── scripts/
+│   ├── set-version.mjs            # sincroniza a versão em todos os manifests
+│   ├── generate-icons.py          # gera os ícones do Tauri e do Android a partir do master
+│   └── install-vbcable.ps1        # instala o driver do cabo virtual (Windows)
+├── docs/                          # arquitetura, roadmap, latência, planos
+├── .github/workflows/release.yml  # CI de release (APK + MSI + NSIS)
+└── package.json                   # workspace npm (pc + protocol)
 ```
 
----
-
-## 📚 Documentação
+## Documentação
 
 | Documento | Conteúdo |
 |---|---|
-| [`docs/arquitetura.md`](docs/arquitetura.md) | protocolo de áudio, jitter buffer, controle WebSocket, descoberta, roteamento VB-Cable/PipeWire/BlackHole, orçamento de latência |
-| [`docs/plano-correcoes-painel-controle.md`](docs/plano-correcoes-painel-controle.md) | plano executado do painel funcional, hot-swap e direcionamento a microfone (fases 1–6) |
-| [`docs/latencia.md`](docs/latencia.md) | orçamento de latência por etapa e medições |
-| [`docs/roadmap.md`](docs/roadmap.md) | fases do projeto com gates verificáveis |
-| [`docs/sprint-01.md`](docs/sprint-01.md) | sprint do PoC de áudio, DoD e checklist de teste |
+| [`docs/arquitetura.md`](docs/arquitetura.md) | topologia, protocolo de áudio (header binário), jitter buffer, controle via WebSocket, descoberta, pareamento, roteamento para VB-Cable/PipeWire/BlackHole, orçamento de latência, segurança, riscos |
+| [`docs/roadmap.md`](docs/roadmap.md) | fases 0–7 com gates verificáveis e as decisões de stack (Rust/Tauri no PC, Kotlin/Compose no mobile) |
+| [`docs/latencia.md`](docs/latencia.md) | metodologia de medição de latência ponta a ponta (acústica e por software) e template de relatório |
+| [`docs/sprint-01-resultado.md`](docs/sprint-01-resultado.md) | resultado da sprint 1 e evidência de go/no-go |
+| [`docs/plano-correcoes-painel-controle.md`](docs/plano-correcoes-painel-controle.md) | plano das correções do painel de controle (mute/volume, `isDefault`, discovery, hot-swap de dispositivo) |
+| [`docs/documenta_o_de_arquitetura_microfone_p2p.md`](docs/documenta_o_de_arquitetura_microfone_p2p.md) | briefing original |
 
----
+## Estado atual
 
-## ⚠️ Limitações conhecidas
+Fases 0–5 do roadmap concluídas: PoC de áudio, descoberta zero-config, controles, integração com cabo virtual e app nativo do PC. O painel de controle do PC está funcional — mute/volume aplicados no pipeline de áudio, `isDefault` real, discovery plugado na UI, logs e reconexões reais, e **hot-swap do dispositivo de saída** com rollback transacional (trocar o cabo sem derrubar a saída ativa).
 
-- **Sem criptografia** — o áudio trafega em claro na LAN (ver
-  [`docs/arquitetura.md`](docs/arquitetura.md) §10).
-- **Depende de cabo virtual** — sem VB-Cable/PipeWire/BlackHole o sistema não
-  enxerga um microfone.
-- **Isolamento de cliente** — redes Wi-Fi de guest/AP corporativo bloqueiam a
-  descoberta e às vezes o áudio.
-- **Android**: o mute do celular sinaliza a flag, mas não interrompe a
-  captura; mute/volume não ressincronizam ao reconectar.
-- O APK publicado é de **debug** (sem assinatura de release).
+Em andamento (Fase 6 — Voice Quality): codec Opus, AEC/AGC/NS por hardware e seletor de microfone no Android.
 
----
+## Limitações conhecidas
 
-## 📄 Licença
-
-Uso pessoal. O VB-Cable é *donationware* da VB-Audio — veja
-<https://vb-audio.com/Cable/>.
+- **Sem criptografia.** O áudio trafega em claro na LAN — quem estiver na mesma rede com sniffing consegue ouvir (`docs/arquitetura.md` §10).
+- **Depende do cabo virtual** instalado no PC para que o sistema enxergue um microfone.
+- **Isolamento de cliente** em AP corporativo/guest impede a descoberta. O celular não tem entrada de IP manual — se o beacon e o probe unicast não passarem, a rede precisa liberar broadcast.
+- **Opus ainda não é implementado** — o wire format já reserva o codec, mas o pipeline usa PCM s16le.
+- **Mute no Android** apenas marca a flag `MUTED` nos frames; a captura continua e o PC decide o que fazer.
+- **Mute/volume não ressincronizam ao reconectar** — o `welcome` do PC ainda não carrega o estado atual.
+- **Latência acústica (Método A) ainda não medida** — o número publicado é estimativa de software (`docs/latencia.md`).
