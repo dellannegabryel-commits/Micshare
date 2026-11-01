@@ -42,3 +42,13 @@ export interface DiscoveryStatus {
   probesAnswered: number;
   enabled: boolean;
 }
+
+export interface CommandError {
+  code: string;
+  message: string;
+}
+
+export interface StatusEvent {
+  running: boolean;
+  error: CommandError | null;
+}

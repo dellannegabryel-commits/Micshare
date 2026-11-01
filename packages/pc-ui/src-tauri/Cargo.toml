@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2.12", features = [] }
-tauri-plugin-shell = "2"
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
 cpal = "0.18"
 tokio-tungstenite = "0.30"
@@ -24,3 +23,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hostname = "0.4"
 if-addrs = "0.15"
+open = "5"

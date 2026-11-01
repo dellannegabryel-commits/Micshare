@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::audio::{AudioConfig, AudioPipeline, JitterMetrics};
@@ -53,13 +52,7 @@ pub struct Server {
 
 impl Server {
     /// Inicia os subsistemas e sobe as tasks de background.
-    ///
-    /// `stats_tx` é um canal opcional para emitir estatísticas como eventos Tauri
-    /// (além de publicá-las no canal de controle WebSocket para o celular).
-    pub async fn start(
-        config: ServerConfig,
-        stats_tx: Option<broadcast::Sender<ServerStats>>,
-    ) -> Result<Arc<Self>, DynError> {
+    pub async fn start(config: ServerConfig) -> Result<Arc<Self>, DynError> {
         // Descoberta: beacon UDP em 41234.
         let discovery = Arc::new(
             Discovery::start(BeaconConfig {
@@ -113,7 +106,7 @@ impl Server {
             }
         };
 
-        // Publica as métricas do jitter no canal de controle (1 Hz) e emite evento Tauri.
+        // Publica as métricas do jitter no canal de controle (1 Hz).
         if let Some(audio) = audio.clone() {
             let control = Arc::clone(&control);
             tasks.push(tokio::spawn(async move {
@@ -123,26 +116,14 @@ impl Server {
                 loop {
                     ticker.tick().await;
                     let metrics = audio.metrics();
-                    let stats = ControlStats {
-                        loss_pct: audio.loss_pct(),
-                        buffer_ms: metrics.buffer_ms,
-                        seq_gaps: metrics.gaps as u32,
-                        reconnects: 0,
-                    };
-                    control.set_stats(stats).await;
-
-                    // Emite evento Tauri se houver canal.
-                    if let Some(tx) = &stats_tx {
-                        let server_stats = ServerStats {
-                            running: true,
-                            sessions: 0, // será preenchido pelo control se necessário
-                            jitter: metrics,
-                            fps: audio.fps(),
+                    control
+                        .set_stats(ControlStats {
                             loss_pct: audio.loss_pct(),
-                            device_name: audio.device_name().to_owned(),
-                        };
-                        let _ = tx.send(server_stats);
-                    }
+                            buffer_ms: metrics.buffer_ms,
+                            seq_gaps: metrics.gaps as u32,
+                            reconnects: 0,
+                        })
+                        .await;
                 }
             }));
         }

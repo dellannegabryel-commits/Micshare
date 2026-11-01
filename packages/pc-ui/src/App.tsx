@@ -4,7 +4,7 @@ import { ControlsPanel } from './components/ControlsPanel';
 import { StatsPanel } from './components/StatsPanel';
 import { LogConsole } from './components/LogConsole';
 import { useServer } from './hooks/useServer';
-import { Mic, Settings, AlertTriangle, Loader2 } from 'lucide-react';
+import { Mic, Settings, AlertTriangle, Loader2, XCircle } from 'lucide-react';
 
 function App() {
   const {
@@ -13,7 +13,9 @@ function App() {
     devices,
     logs,
     loading,
+    error,
     discovery,
+    running,
     startServer,
     stopServer,
     updateConfig,
@@ -56,6 +58,24 @@ function App() {
       <main className="flex-1 overflow-y-auto p-4 md:p-6">
         <div className="max-w-md mx-auto space-y-4">
 
+          {/* Structured error banner */}
+          {error && (
+            <div className="glass-panel p-4 flex items-start gap-3 border-red-200/50 dark:border-red-700/50 bg-red-50/50 dark:bg-red-900/20">
+              <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                  Erro ao iniciar o servidor
+                  <span className="ml-2 font-mono text-xs px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300">
+                    {error.code}
+                  </span>
+                </p>
+                <p className="text-xs text-red-700 dark:text-red-300 mt-1 break-words">
+                  {error.message}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* VB-Cable Warning */}
           {!isVBCableInstalled && (
             <div className="glass-panel p-4 flex items-start gap-3 border-yellow-200/50 dark:border-yellow-700/50 bg-yellow-50/50 dark:bg-yellow-900/20">
@@ -79,7 +99,7 @@ function App() {
 
           {/* Server Status Card */}
           <ServerStatus
-            running={stats.running}
+            running={running}
             sessions={stats.sessions}
             deviceName={stats.deviceName}
             onStart={startServer}

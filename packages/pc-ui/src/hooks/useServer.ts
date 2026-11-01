@@ -1,96 +1,129 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { ServerConfig, ServerStats, AudioDevice, LogEntry, DiscoveryStatus } from '../types';
+import {
+  ServerConfig,
+  ServerStats,
+  AudioDevice,
+  LogEntry,
+  DiscoveryStatus,
+  CommandError,
+  StatusEvent,
+} from '../types';
+
+const EMPTY_STATS: ServerStats = {
+  running: false,
+  sessions: 0,
+  jitter: {
+    received: 0,
+    lost: 0,
+    gaps: 0,
+    bufferMs: 0,
+    underruns: 0,
+    fastForwards: 0,
+    flushes: 0,
+  },
+  fps: 0,
+  lossPct: 0,
+  deviceName: '',
+};
+
+const DEFAULT_CONFIG: ServerConfig = {
+  audioPort: 41235,
+  ctrlPort: 41236,
+  deviceSubstring: null,
+  name: null,
+  defaultCodec: 'opus',
+};
+
+/**
+ * Normaliza o erro vindo do `invoke`. O Tauri serializa `Result<T, CommandError>`
+ * como um objeto `{ code, message }` (não uma `Error`), então precisamos tratar
+ * ambos os formatos.
+ */
+function toCommandError(e: unknown, fallback: string): CommandError {
+  if (e && typeof e === 'object' && 'code' in e && 'message' in e) {
+    return e as CommandError;
+  }
+  return {
+    code: 'unknown',
+    message: e instanceof Error ? e.message : fallback,
+  };
+}
 
 export function useServer() {
-  const [config, setConfig] = useState<ServerConfig>({
-    audioPort: 41235,
-    ctrlPort: 41236,
-    deviceSubstring: null,
-    name: null,
-    defaultCodec: 'opus',
-  });
-
-  const [stats, setStats] = useState<ServerStats>({
-    running: false,
-    sessions: 0,
-    jitter: {
-      received: 0,
-      lost: 0,
-      gaps: 0,
-      bufferMs: 0,
-      underruns: 0,
-      fastForwards: 0,
-      flushes: 0,
-    },
-    fps: 0,
-    lossPct: 0,
-    deviceName: '',
-  });
-
+  const [config, setConfig] = useState<ServerConfig>(DEFAULT_CONFIG);
+  const [stats, setStats] = useState<ServerStats>(EMPTY_STATS);
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<CommandError | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
+  const [running, setRunning] = useState(false);
 
-  // Load initial config and devices
-  useEffect(() => {
-    loadConfig();
-    loadDevices();
-    loadDiscovery();
+  const addLog = useCallback((level: LogEntry['level'], message: string) => {
+    setLogs(prev => [...prev.slice(-999), {
+      id: Date.now(),
+      timestamp: new Date(),
+      level,
+      message,
+    }]);
   }, []);
 
-  // Listen for stats updates from backend
+  // Carrega config, dispositivos e status; inicia o servidor automaticamente.
   useEffect(() => {
-    let unlisten: UnlistenFn;
+    const boot = async () => {
+      let loaded = DEFAULT_CONFIG;
+      try {
+        loaded = await invoke<ServerConfig>('get_server_config');
+        setConfig(loaded);
+      } catch (e) {
+        console.error('Failed to load config:', e);
+      }
 
-    const setupListener = async () => {
-      unlisten = await listen<ServerStats>('server-stats', (event) => {
-        setStats(event.payload);
-      });
+      try {
+        const names = await invoke<string[]>('list_output_devices');
+        setDevices(names.map(name => ({ name, isDefault: false })));
+      } catch (e) {
+        console.error('Failed to load devices:', e);
+      }
+
+      try {
+        const status = await invoke<StatusEvent>('get_server_status');
+        setRunning(status.running);
+        setError(status.error);
+      } catch (e) {
+        console.error('Failed to load status:', e);
+      }
     };
 
-    setupListener();
+    boot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Escuta os eventos de status e stats emitidos pelo backend.
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+
+    const setup = async () => {
+      unlisteners.push(
+        await listen<StatusEvent>('server-status', (event) => {
+          setRunning(event.payload.running);
+          setError(event.payload.error);
+        })
+      );
+      unlisteners.push(
+        await listen<ServerStats>('server-stats', (event) => {
+          setStats(event.payload);
+        })
+      );
+    };
+
+    setup();
 
     return () => {
-      if (unlisten) unlisten();
+      unlisteners.forEach((u) => u());
     };
-  }, []);
-
-  // Poll stats when server is running
-  useEffect(() => {
-    if (!stats.running) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const currentStats = await invoke<ServerStats>('get_server_stats');
-        setStats(currentStats);
-      } catch (e) {
-        console.error('Failed to fetch stats:', e);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [stats.running]);
-
-  const loadConfig = useCallback(async () => {
-    try {
-      const loadedConfig = await invoke<ServerConfig>('get_server_config');
-      setConfig(loadedConfig);
-    } catch (e) {
-      console.error('Failed to load config:', e);
-    }
-  }, []);
-
-  const loadDevices = useCallback(async () => {
-    try {
-      const deviceNames = await invoke<string[]>('list_output_devices');
-      setDevices(deviceNames.map(name => ({ name, isDefault: false })));
-    } catch (e) {
-      console.error('Failed to load devices:', e);
-    }
   }, []);
 
   const loadDiscovery = useCallback(async () => {
@@ -102,6 +135,66 @@ export function useServer() {
     }
   }, []);
 
+  // Poll de sessões (o backend já emite `server-stats`, mas mantemos fallback).
+  useEffect(() => {
+    if (!running) return;
+    const interval = setInterval(async () => {
+      try {
+        const current = await invoke<ServerStats>('get_server_stats');
+        setStats(current);
+      } catch (e) {
+        console.error('Failed to fetch stats:', e);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [running]);
+
+  const startServer = useCallback(async (newConfig?: Partial<ServerConfig>) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const finalConfig = { ...config, ...newConfig };
+      await invoke('start_server', { config: finalConfig });
+      setConfig(finalConfig);
+      await invoke('save_server_config', { config: finalConfig });
+      addLog('info', 'Servidor iniciado.');
+    } catch (e) {
+      const err = toCommandError(e, 'Falha ao iniciar o servidor');
+      setError(err);
+      setRunning(false);
+      addLog('error', `[${err.code}] ${err.message}`);
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [config, addLog]);
+
+  const stopServer = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      await invoke('stop_server');
+      setRunning(false);
+      setStats(EMPTY_STATS);
+      addLog('info', 'Servidor parado.');
+    } catch (e) {
+      const err = toCommandError(e, 'Falha ao parar o servidor');
+      setError(err);
+      addLog('error', `[${err.code}] ${err.message}`);
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [addLog]);
+
+  const updateConfig = useCallback(async (updates: Partial<ServerConfig>) => {
+    const newConfig = { ...config, ...updates };
+    setConfig(newConfig);
+    await invoke('save_server_config', { config: newConfig });
+  }, [config]);
+
   const startDiscovery = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -109,7 +202,8 @@ export function useServer() {
       const status = await invoke<DiscoveryStatus>('start_discovery');
       setDiscovery(status);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start discovery');
+      const err = toCommandError(e, 'Falha ao iniciar descoberta');
+      setError(err);
       throw e;
     } finally {
       setLoading(false);
@@ -123,7 +217,8 @@ export function useServer() {
       await invoke('stop_discovery');
       setDiscovery(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to stop discovery');
+      const err = toCommandError(e, 'Falha ao parar descoberta');
+      setError(err);
       throw e;
     } finally {
       setLoading(false);
@@ -139,75 +234,35 @@ export function useServer() {
     }
   }, []);
 
-  const startServer = useCallback(async (newConfig?: Partial<ServerConfig>) => {
+  const installVBCable = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const finalConfig = { ...config, ...newConfig };
-      await invoke('start_server', { config: finalConfig });
-      // Inicia o listener de eventos de estatísticas
-      await invoke('start_stats_listener');
-      setConfig(finalConfig);
-      await invoke('save_server_config', { config: finalConfig });
+      await invoke('install_vbcable');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start server');
-      throw e;
-    } finally {
-      setLoading(false);
-    }
-  }, [config]);
-
-  const stopServer = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await invoke('stop_server');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to stop server');
+      const err = toCommandError(e, 'Falha ao abrir página do VB-Cable');
+      setError(err);
       throw e;
     } finally {
       setLoading(false);
     }
   }, []);
-
-  const updateConfig = useCallback(async (updates: Partial<ServerConfig>) => {
-    const newConfig = { ...config, ...updates };
-    setConfig(newConfig);
-    await invoke('save_server_config', { config: newConfig });
-  }, [config]);
-
-  const installVBCable = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await invoke('install_vbcable');
-      await loadDevices();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to install VB-Cable');
-      throw e;
-    } finally {
-      setLoading(false);
-    }
-  }, [loadDevices]);
 
   const openLogFolder = useCallback(async () => {
     try {
       await invoke('open_log_folder');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to open log folder');
+      setError(toCommandError(e, 'Falha ao abrir pasta de logs'));
     }
   }, []);
 
-  const addLog = useCallback((level: LogEntry['level'], message: string) => {
-    setLogs(prev => [...prev.slice(-999), {
-      id: Date.now(),
-      timestamp: new Date(),
-      level,
-      message,
-    }]);
+  const refreshDevices = useCallback(async () => {
+    try {
+      const names = await invoke<string[]>('list_output_devices');
+      setDevices(names.map(name => ({ name, isDefault: false })));
+    } catch (e) {
+      console.error('Failed to refresh devices:', e);
+    }
   }, []);
 
   return {
@@ -218,13 +273,14 @@ export function useServer() {
     loading,
     error,
     discovery,
+    running,
     startServer,
     stopServer,
     updateConfig,
     installVBCable,
     openLogFolder,
     addLog,
-    refreshDevices: loadDevices,
+    refreshDevices,
     loadDiscovery,
     startDiscovery,
     stopDiscovery,
