@@ -1,79 +1,207 @@
 # Micshare
 
-Microfone sem fio: o celular vira microfone de entrada do PC pela rede local, com baixa latência e zero configuração.
+**O celular vira o microfone do PC pela rede local**, com baixa latência e sem
+cabo. O áudio do celular chega ao PC e é injetado num cabo de áudio virtual,
+aparecendo como microfone no Discord, OBS, Zoom e jogos.
 
 ```
-celular (React Native) ──UDP/Wi-Fi──> PC (Node + TypeScript) ──> cabo virtual ──> Discord / OBS / jogos
+Celular (Android)  ──UDP 41235──▶  Servidor PC (Rust + Tauri 2)  ──cpal──▶  CABLE Input  ──▶  CABLE Output  ──▶  Discord / OBS / Zoom
+                          ▲                                                                       (microfone)
+                          └── controle WS 41236 (hello/welcome/stats) ──┘
+                     beacon UDP 41234 (descoberta)
 ```
 
-## Documentação
+Servidor PC em **Rust + Tauri 2**, app Android em **Kotlin + Jetpack Compose**.
+
+---
+
+## 📥 Download
+
+| Versão | Arquivo | Plataforma |
+|---|---|---|
+| [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0) | `micshare-pc.exe` | Windows 10/11 x64 |
+| [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0) | `Micshare_0.3.0_x64-setup.exe` | Windows (instalador) |
+| [`v0.3.0`](https://github.com/dellannegabryel-commits/Micshare/releases/tag/v0.3.0) | `app-debug.apk` | Android 6.0+ (API 23) |
+
+### 🔌 VB-Cable — obrigatório para usar como microfone
+
+O Micshare entrega o áudio no **cabo virtual**. Sem ele, não existe como
+transformar o celular em microfone.
+
+**➜ Download direto (Windows): https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip**
+
+Página oficial e instruções: **https://vb-audio.com/Cable/**
+
+> Extraia o ZIP e execute o instalador **como administrador**.
+> **Reinicie o Windows** após instalar.
+> O VB-Cable é *donationware*: a instalação é gratuita, a VB-Audio aceita doações.
+
+Alternativas: **PipeWire** (Linux), **BlackHole** (macOS), **VoiceMeeter** (Windows).
+
+---
+
+## 🚀 Como usar
+
+1. **Instale o VB-Cable** (link acima) e reinicie o Windows.
+2. **Execute o `micshare-pc.exe`** — o servidor sobe automaticamente (auto-start),
+   com o cabo virtual já selecionado.
+3. **Instale o `app-debug.apk`** no celular (permita instalar de fontes
+   desconhecidas) e abra o Micshare.
+4. No Discord/OBS/Zoom, selecione **CABLE Output** como microfone.
+5. Conecte e fale — o PC passa a ouvir o celular.
+
+### Por que "CABLE Input" e "CABLE Output"?
+
+O VB-Cable é um par de endpoints: o áudio que entra no **CABLE Input** (lado de
+playback, onde o Micshare escreve) é encaminhado para o **CABLE Output** (lado de
+recording, que os apps capturam como microfone).
+
+```
+Micshare ──escreve──▶ CABLE Input ═══(cabo virtual)═══▶ CABLE Output ──▶ app captura como mic
+```
+
+O Micshare detecta o cabo automaticamente e o **prefere ao dispositivo padrão do
+sistema** — sem isso o áudio iria para os alto-falantes/fones, e não viraria
+microfone.
+
+---
+
+## ✨ Funcionalidades
+
+### Servidor PC (Rust + Tauri 2)
+
+- **Painel de controle funcional** — mute e volume do PC aplicados no callback
+  de tempo real do `cpal` (ganho por amostra, fixed-point `0..=4000`, com
+  saturação em i16). Estado refletido ao vivo nas estatísticas.
+- **Hot-swap do dispositivo de saída** — troca o stream sem reiniciar o
+  servidor, de forma transacional: constrói o novo stream pausado → derruba o
+  antigo (aguardando o drop real, que libera o endpoint no WASAPI) → inicia o
+  novo. **Rollback** se falhar, para o áudio nunca ficar mudo.
+- **Seleção inteligente de dispositivo** — nome exato > prefixo > substring, com
+  desempate estável; detecta `CABLE Input` / `VB-Audio` / `VoiceMeeter`.
+- **Descoberta por beacon** — o celular encontra o PC automaticamente na LAN.
+- **Estatísticas ao vivo** — FPS, perda, profundidade do jitter buffer, gaps,
+  underruns, reconexões, sessões conectadas.
+- **Shutdown determinístico** — parar e iniciar de novo não gera `portInUse`.
+- **Erros estruturados** — `{ code, message }` com códigos estáveis
+  (`portInUse`, `audioDeviceError`, `serverNotRunning`, …).
+- **Auto-start** — o servidor sobe junto com o app.
+
+### App Android (Kotlin + Compose)
+
+- Captura de áudio real (PCM 48 kHz / mono) e envio por UDP.
+- Handshake `hello` → `welcome` com o protocolo canônico JSON.
+- Mute e volume enviados ao PC pelo canal de controle.
+- Descoberta do PC na LAN e serviço de captura em foreground com notificação.
+
+---
+
+## 🧱 Protocolo
+
+Protocolo canônico único PC↔celular, em JSON (controle) e datagramas UDP
+(audio). Detalhes em [`docs/arquitetura.md`](docs/arquitetura.md).
+
+| Porta | Transporte | Função |
+|---|---|---|
+| `41234` | UDP | beacon de descoberta (`Beacon`) |
+| `41235` | UDP | frames de áudio do celular |
+| `41236` | WebSocket | controle: `hello`/`welcome`/`stats`/`mute`/`volume`/`bye`/`error` |
+
+**Header de áudio** — 16 bytes Big-Endian, magic `0x4D53`, seguido de PCM
+`s16le` little-endian:
+
+```
+┌──────────┬───────────┬───────────┬──────────┬──────────┬───────────┐
+│ magic    │ seq       │ capture_ts│ length   │ codec    │ channels  │
+│ u16      │ u32       │ u32       │ u16      │ u8       │ u8        │
+└──────────┴───────────┴───────────┴──────────┴──────────┴───────────┘
+```
+
+---
+
+## 🛠️ Desenvolvimento
+
+Pré-requisitos: **Rust 1.85+**, **Node 20+**, **JDK 21**, **Android SDK 35**.
+
+### Servidor PC
+
+```bash
+cd packages/pc-ui
+
+npm install
+npm run tauri:dev        # app em modo dev (auto-start do servidor)
+npm run tauri:build      # build de release: .exe + instaladores NSIS/MSI
+
+# testes e lint do backend Rust
+cd src-tauri
+cargo test
+cargo clippy --all-targets
+cargo fmt --all
+
+# diagnósticos
+cargo run --example devices   # lista dispositivos de saída e seus formatos
+cargo run --example hot_swap   # testa o hot-swap e o rollback
+cargo run --example serve      # servidor sem UI
+```
+
+### App Android
+
+```bash
+cd mobile-android
+gradle assembleDebug        # mobile-android/app/build/outputs/apk/debug/app-debug.apk
+gradle installDebug         # instala no dispositivo conectado
+```
+
+> Sem `gradlew.bat` no repositório: use o Gradle do sistema ou o distribution
+> em `~/.gradle/wrapper/dists/gradle-8.13-all/`.
+
+---
+
+## 📁 Estrutura
+
+```
+packages/pc-ui/           Servidor PC — Tauri 2 + React + TypeScript
+  src-tauri/src/
+    audio/                Pipeline: jitter buffer, reamostragem, sink cpal
+    control/              Servidor WebSocket (sessões, mute/volume do celular)
+    discovery/            Beacon UDP
+    protocol/             Protocolo canônico (JSON + header de áudio)
+    commands.rs           Comandos Tauri expostos à UI
+    server.rs             Orquestra os 3 subsistemas + ServerStats
+    state.rs              Estado compartilhado (Tauri State)
+mobile-android/           App Android — Kotlin + Compose
+docs/                     Arquitetura, roadmap, latência, planos
+```
+
+---
+
+## 📚 Documentação
 
 | Documento | Conteúdo |
 |---|---|
-| [`docs/arquitetura.md`](docs/arquitetura.md) | protocolo de áudio (header binário), jitter buffer, controle via WebSocket, descoberta, roteamento para VB-CABLE/PipeWire/BlackHole, orçamento de latência, decisões e riscos |
-| [`docs/roadmap.md`](docs/roadmap.md) | fases 0–5 com gates verificáveis (~6 semanas até MVP utilizável) |
-| [`docs/sprint-01.md`](docs/sprint-01.md) | plano da sprint atual (PoC de áudio), tarefas, DoD e checklist de teste |
-| [`docs/plano-cli.md`](docs/plano-cli.md) | plano da CLI de controle do PC: status, mute/volume, disconnect, restart, daemon local |
-| [`docs/plano-cli-ui-binario.md`](docs/plano-cli-ui-binario.md) | plano da UI web local + binário único (pkg/Node SEA) para a CLI do PC |
-| [`documenta_o_de_arquitetura_microfone_p2p.md`](documenta_o_de_arquitetura_microfone_p2p.md) | briefing original |
+| [`docs/arquitetura.md`](docs/arquitetura.md) | protocolo de áudio, jitter buffer, controle WebSocket, descoberta, roteamento VB-Cable/PipeWire/BlackHole, orçamento de latência |
+| [`docs/plano-correcoes-painel-controle.md`](docs/plano-correcoes-painel-controle.md) | plano executado do painel funcional, hot-swap e direcionamento a microfone (fases 1–6) |
+| [`docs/latencia.md`](docs/latencia.md) | orçamento de latência por etapa e medições |
+| [`docs/roadmap.md`](docs/roadmap.md) | fases do projeto com gates verificáveis |
+| [`docs/sprint-01.md`](docs/sprint-01.md) | sprint do PoC de áudio, DoD e checklist de teste |
 
-## Estado
+---
 
-PoC de áudio (Sprint 01) funcionando: servidor UDP + jitter buffer + saída PortAudio/VB-Cable, controle WebSocket e beacon de descoberta. A CLI de controle do PC tem REPL in-process (Fase 1) e canal administrativo local com daemon (Fase 2); a Fase 3 (monitor/pareamento) está descrita em [`docs/plano-cli.md`](docs/plano-cli.md).
+## ⚠️ Limitações conhecidas
 
-## CLI do PC
+- **Sem criptografia** — o áudio trafega em claro na LAN (ver
+  [`docs/arquitetura.md`](docs/arquitetura.md) §10).
+- **Depende de cabo virtual** — sem VB-Cable/PipeWire/BlackHole o sistema não
+  enxerga um microfone.
+- **Isolamento de cliente** — redes Wi-Fi de guest/AP corporativo bloqueiam a
+  descoberta e às vezes o áudio.
+- **Android**: o mute do celular sinaliza a flag, mas não interrompe a
+  captura; mute/volume não ressincronizam ao reconectar.
+- O APK publicado é de **debug** (sem assinatura de release).
 
-```bash
-npm --prefix packages/pc run dev                 # sobe o servidor e abre o prompt
-npm --prefix packages/pc run dev -- --device "CABLE Input" --verbose
-npm --prefix packages/pc run dev -- devices      # lista as saídas de áudio
+---
 
-# controle externo (Fase 2), de qualquer terminal:
-npm --prefix packages/pc run dev -- daemon start --device "CABLE Input"
-npm --prefix packages/pc run dev -- status            # exit 2 se o servidor estiver parado
-npm --prefix packages/pc run dev -- status --json     # contrato ServerStatus
-npm --prefix packages/pc run dev -- ctl mute on
-npm --prefix packages/pc run dev -- ctl restart --sink
-npm --prefix packages/pc run dev -- daemon stop
-```
+## 📄 Licença
 
-O daemon usa named pipe `\\.\pipe\micshare-pc-<USUARIO>` (fallback TCP `127.0.0.1:41237`) com token em `%LOCALAPPDATA%\Micshare\admin.token`. Exit codes: `0` ok, `1` erro, `2` servidor parado.
-
-No prompt (`micshare>`):
-
-| Comando | Efeito |
-|---|---|
-| `status` / `stats` / `clients` | estado do servidor, métricas de 1 s e sessões conectadas |
-| `devices` / `device <substr>` | lista e troca a saída de áudio em runtime (com rollback) |
-| `mute [on\|off\|toggle]` | silencia de fato a saída (o jitter continua drenando) |
-| `volume <0..4 \| +0.1 \| -0.1>` | ganho aplicado no PCM, com clamp em 16 bits |
-| `disconnect [<id>\|all]` | envia `bye` e fecha a sessão do celular |
-| `restart [--sink\|--control\|--beacon\|--all]` | reinicia partes do servidor sem matar o processo |
-| `pair [on\|off\|rotate]` / `beacon [on\|off\|interval <ms>]` | pareamento e descoberta |
-| `help` / `stop` | ajuda e shutdown gracioso |
-
-Qualquer comando aceita `--json` (`status --json`) para script. Testes: `npm --prefix packages/pc test`.
-
-## Stack
-
-- **PC:** Node 24 + TypeScript, `dgram` (áudio), `ws` (controle), `naudiodon2` (saída via PortAudio).
-- **Mobile:** React Native + TypeScript, `react-native-audio-api` (captura PCM), `react-native-udp` (transporte).
-- **Cabo virtual (obrigatório para uso real, não para o PoC):** VB-CABLE (Windows), PipeWire (Linux), BlackHole (macOS).
-
-## Kanban
-
-```bash
-hermes kanban list          # board micshare
-```
-
-Tarefas da Sprint 01 em `ready`, o gate (S1.8) e as fases seguintes em `todo`, presos por dependência.
-
-## Limitações conhecidas do MVP
-
-- Sem criptografia: o áudio trafega em claro na LAN (ver `docs/arquitetura.md` §10).
-- Depende de cabo virtual instalado no PC para que o sistema enxergue um microfone.
-- Redes com isolamento de cliente (AP corporativo/guests) impedem descoberta e frequentemente o áudio — usar IP manual quando aplicável.
-# trigger
-# trigger
-# trigger
-# trigger 2
+Uso pessoal. O VB-Cable é *donationware* da VB-Audio — veja
+<https://vb-audio.com/Cable/>.

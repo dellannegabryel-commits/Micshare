@@ -198,11 +198,29 @@ pub async fn stop_discovery(state: State<'_, AppState>) -> Result<(), CommandErr
     Ok(())
 }
 
-/// Abre a página de download do VB-Cable no navegador padrão.
+/// Link oficial do VB-Cable para Windows (driver virtual de áudio).
+///
+/// O Micshare escreve o áudio do celular no lado de **playback** do cabo
+/// (`CABLE Input`); o par `CABLE Output` aparece como microfone no
+/// Discord/OBS/Zoom. Sem o driver, não há como transformar o celular em mic.
+pub const VBCABLE_DOWNLOAD_URL: &str =
+    "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip";
+
+/// Página oficial do VB-Cable (explica a instalação e o reboot).
+pub const VBCABLE_INFO_URL: &str = "https://vb-audio.com/Cable/";
+
+/// Abre o download do VB-Cable no navegador padrão.
+///
+/// `direct` baixa o pacote do driver (`VBCABLE_Driver_Pack45.zip`); sem ele,
+/// abre a página oficial com as instruções de instalação.
 #[tauri::command]
-pub async fn install_vbcable() -> Result<(), CommandError> {
-    const URL: &str = "https://vb-audio.com/Cable/";
-    open::that(URL).map_err(|e| CommandError::internal(format!("falha ao abrir {URL}: {e}")))
+pub async fn install_vbcable(direct: Option<bool>) -> Result<(), CommandError> {
+    let url = if direct.unwrap_or(false) {
+        VBCABLE_DOWNLOAD_URL
+    } else {
+        VBCABLE_INFO_URL
+    };
+    open::that(url).map_err(|e| CommandError::internal(format!("falha ao abrir {url}: {e}")))
 }
 
 /// Abre a pasta de logs do sistema no explorador de arquivos.

@@ -1,12 +1,16 @@
 import { RefreshCw, Speaker, Mic, Download } from 'lucide-react';
 
+/** Link oficial do driver VB-Cable para Windows (cabo virtual de áudio). */
+const VBCABLE_DOWNLOAD_URL =
+  'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip';
+
 interface DeviceSelectorProps {
   devices: Array<{ name: string; isDefault: boolean; isVirtualCable: boolean }>;
   selectedDevice: string | null;
   activeDevice: string;
   onChange: (name: string | null) => void;
   onRefresh: () => void;
-  onInstallVBCable: () => void;
+  onInstallVBCable: (direct?: boolean) => void;
   installing: boolean;
 }
 
@@ -98,12 +102,18 @@ export function DeviceSelector({
               Discord, OBS ou Zoom.
             </p>
             <button
-              onClick={onInstallVBCable}
+              onClick={() => onInstallVBCable(true)}
               disabled={installing}
               className="mt-2 font-medium underline disabled:opacity-50"
             >
-              {installing ? 'Abrindo...' : 'Instalar VB-Cable'}
+              {installing ? 'Abrindo...' : 'Baixar VB-Cable (Windows)'}
             </button>
+            <p className="mt-2 font-mono text-[10px] break-all opacity-80">
+              {VBCABLE_DOWNLOAD_URL}
+            </p>
+            <p className="mt-1 opacity-80">
+              Requer administrador; reinicie o Windows após instalar.
+            </p>
           </div>
         </div>
       )}

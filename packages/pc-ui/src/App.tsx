@@ -16,6 +16,7 @@ function App() {
     error,
     discovery,
     running,
+    version,
     startServer,
     stopServer,
     updateConfig,
@@ -100,7 +101,7 @@ function App() {
               });
             }}
             onRefresh={refreshDevices}
-            onInstallVBCable={installVBCable}
+            onInstallVBCable={(direct) => { installVBCable(direct).catch(() => {}); }}
             installing={loading}
           />
 
@@ -124,7 +125,7 @@ function App() {
       {/* Footer */}
       <footer className="px-6 py-4 border-t border-neutral-200/50 dark:border-neutral-700/50 bg-white/50 dark:bg-neutral-900/50">
         <div className="max-w-md mx-auto flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
-          <span>Micshare v0.1.0</span>
+          <span>Micshare {version ? `v${version}` : ''}</span>
           <span>Latência alvo: {"<"} 150ms</span>
         </div>
       </footer>

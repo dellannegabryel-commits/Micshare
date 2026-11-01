@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import {
   ServerConfig,
@@ -83,6 +84,7 @@ export function useServer() {
   const [error, setError] = useState<CommandError | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [running, setRunning] = useState(false);
+  const [version, setVersion] = useState('');
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
     setLogs(prev => [...prev.slice(-999), {
@@ -129,6 +131,13 @@ export function useServer() {
         setDiscovery(beacon);
       } catch (e) {
         console.error('Failed to load discovery:', e);
+      }
+
+      // Versão real do binário (vem do tauri.conf.json no build).
+      try {
+        setVersion(await getVersion());
+      } catch (e) {
+        console.error('Failed to load version:', e);
       }
     };
 
@@ -278,11 +287,15 @@ export function useServer() {
     }
   }, []);
 
-  const installVBCable = useCallback(async () => {
+  /**
+   * Abre o VB-Cable no navegador.
+   * `direct` baixa o pacote do driver; sem ele, abre a página oficial.
+   */
+  const installVBCable = useCallback(async (direct = true) => {
     setLoading(true);
     setError(null);
     try {
-      await invoke('install_vbcable');
+      await invoke('install_vbcable', { direct });
     } catch (e) {
       const err = toCommandError(e, 'Falha ao abrir página do VB-Cable');
       setError(err);
@@ -357,6 +370,7 @@ export function useServer() {
     error,
     discovery,
     running,
+    version,
     startServer,
     stopServer,
     updateConfig,
