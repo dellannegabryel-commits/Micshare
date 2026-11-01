@@ -43,6 +43,8 @@ pub struct ServerStats {
     pub muted: bool,
     /// Volume da reprodução no PC (fixed-point: 1000 = 100%).
     pub volume: u32,
+    /// Reconexões (novos `hello` de IPs que já se conectaram).
+    pub reconnects: u32,
 }
 
 impl Default for ServerStats {
@@ -56,6 +58,7 @@ impl Default for ServerStats {
             device_name: String::new(),
             muted: false,
             volume: VOLUME_UNITY,
+            reconnects: 0,
         }
     }
 }
@@ -150,7 +153,7 @@ impl Server {
                             loss_pct: audio.loss_pct(),
                             buffer_ms: metrics.buffer_ms,
                             seq_gaps: metrics.gaps as u32,
-                            reconnects: 0,
+                            reconnects: control.reconnects(),
                         })
                         .await;
                 }
@@ -199,6 +202,7 @@ impl Server {
             device_name,
             muted: self.controls.muted(),
             volume: self.controls.volume(),
+            reconnects: self.control.reconnects(),
         }
     }
 

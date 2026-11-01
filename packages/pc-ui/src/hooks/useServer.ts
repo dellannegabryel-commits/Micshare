@@ -28,6 +28,7 @@ const EMPTY_STATS: ServerStats = {
   deviceName: '',
   muted: false,
   volume: 1000,
+  reconnects: 0,
 };
 
 const DEFAULT_CONFIG: ServerConfig = {
@@ -90,6 +91,10 @@ export function useServer() {
       level,
       message,
     }]);
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
   }, []);
 
   // Carrega config, dispositivos e status; inicia o servidor automaticamente.
@@ -348,5 +353,6 @@ export function useServer() {
     setDiscoveryEnabled,
     setMute,
     setVolume,
+    clearLogs,
   };
 }

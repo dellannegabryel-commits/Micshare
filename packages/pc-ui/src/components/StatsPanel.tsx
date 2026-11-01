@@ -42,7 +42,7 @@ export function StatsPanel({ stats }: StatsPanelProps) {
     );
   }
 
-  const { jitter, fps, lossPct, sessions } = stats;
+  const { jitter, fps, lossPct, sessions, reconnects } = stats;
 
   return (
     <div className="glass-panel p-6">
@@ -110,9 +110,10 @@ export function StatsPanel({ stats }: StatsPanelProps) {
         />
         <StatItem
           label="Reconexões"
-          value={jitter.gaps > 0 ? 'Ver gaps' : '0'}
+          value={reconnects}
           icon={<Wifi className="w-4 h-4 text-indigo-500" />}
           color="bg-indigo-100 dark:bg-indigo-900/30"
+          warning={reconnects > 0}
         />
       </div>
 

@@ -4,9 +4,10 @@ import { LogEntry } from '../types';
 
 interface LogConsoleProps {
   logs: LogEntry[];
+  onClear?: () => void;
 }
 
-export function LogConsole({ logs }: LogConsoleProps) {
+export function LogConsole({ logs, onClear }: LogConsoleProps) {
   const [filter, setFilter] = useState<'all' | 'info' | 'warn' | 'error'>('all');
   const [expanded, setExpanded] = useState(false);
 
@@ -58,8 +59,9 @@ export function LogConsole({ logs }: LogConsoleProps) {
             {expanded ? 'Mostrar menos' : 'Mostrar todos'}
           </button>
           <button
-            onClick={() => {}}
-            className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+            onClick={() => onClear?.()}
+            className="p-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors disabled:opacity-40"
+            disabled={!onClear}
             title="Limpar logs"
           >
             <Trash2 className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />

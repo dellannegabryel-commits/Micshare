@@ -24,6 +24,7 @@ function App() {
     refreshDevices,
     setMute,
     setVolume,
+    clearLogs,
   } = useServer();
 
   const isVBCableInstalled = devices.some(d =>
@@ -130,7 +131,7 @@ function App() {
           <StatsPanel stats={stats} />
 
           {/* Log Console */}
-          <LogConsole logs={logs} />
+          <LogConsole logs={logs} onClear={clearLogs} />
 
         </div>
       </main>

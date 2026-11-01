@@ -16,6 +16,8 @@ export interface ServerStats {
   muted: boolean;
   /** Volume fixed-point do backend: 1000 = 100%, 4000 = 400%. */
   volume: number;
+  /** Reconexões (novos `hello` de IPs que já se conectaram). */
+  reconnects: number;
 }
 
 export interface JitterMetrics {

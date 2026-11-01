@@ -4,7 +4,7 @@
 //! `sessionId` e a porta de áudio. Depois, o celular envia `mute`/`volume`
 //! e recebe `stats` a 1 Hz.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -101,6 +101,8 @@ pub struct ControlServer {
     state: Arc<RwLock<ControlState>>,
     session_seq: AtomicU64,
     reconnects: AtomicU64,
+    /// IPs que já enviaram `hello` nesta execução (para contar reconexões).
+    seen_ips: RwLock<HashSet<String>>,
 }
 
 impl ControlServer {
@@ -114,6 +116,7 @@ impl ControlServer {
             state: Arc::new(RwLock::new(ControlState::default())),
             session_seq: AtomicU64::new(0),
             reconnects: AtomicU64::new(0),
+            seen_ips: RwLock::new(HashSet::new()),
         })
     }
 
@@ -145,6 +148,12 @@ impl ControlServer {
     /// Atualiza as métricas divulgadas em `stats`.
     pub async fn set_stats(&self, stats: ControlStats) {
         self.state.write().await.stats = stats;
+    }
+
+    /// Número de reconexões (novos `hello` de IPs que já se conectaram).
+    #[must_use]
+    pub fn reconnects(&self) -> u32 {
+        self.reconnects.load(Ordering::Relaxed) as u32
     }
 
     /// Encerra todas as sessões.
@@ -186,7 +195,7 @@ impl ControlServer {
             loss_pct: state.stats.loss_pct,
             buffer_ms: state.stats.buffer_ms,
             seq_gaps: state.stats.seq_gaps,
-            reconnects: self.reconnects.load(Ordering::Relaxed) as u32,
+            reconnects: self.reconnects(),
         };
         drop(state);
         self.broadcast(&message).await;
@@ -267,6 +276,14 @@ impl ControlServer {
                     } else {
                         CODEC_PCM16
                     };
+
+                    // Reconexão: mesmo IP conectando de novo nesta execução.
+                    {
+                        let mut seen = self.seen_ips.write().await;
+                        if !seen.insert(ip.clone()) {
+                            self.reconnects.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
 
                     self.sessions.write().await.insert(
                         id.clone(),
