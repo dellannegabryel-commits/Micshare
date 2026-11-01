@@ -3,6 +3,7 @@
     <color name="micshare_primary">#0EA5E9</color>
     <color name="micshare_primary_dark">#0284C7</color>
     <color name="micshare_background">#FAFAFA</color>
+    <color name="micshare_icon_background">#242424</color>
     <color name="micshare_surface">#FFFFFF</color>
     <color name="micshare_on_background">#171717</color>
     <color name="micshare_on_surface">#171717</color>
