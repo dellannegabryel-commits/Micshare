@@ -1,0 +1,2 @@
+# Mantem o wrapper do Gradle com LF: em Linux, CRLF quebra o script ("\r: command not found").
+mobile/gradlew text eol=lf
