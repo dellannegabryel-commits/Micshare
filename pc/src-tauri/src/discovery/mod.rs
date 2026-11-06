@@ -48,6 +48,14 @@ impl Discovery {
         self.sender.set_enabled(enabled);
     }
 
+    /// Suspende ou retoma o anúncio por causa de uma sessão de controle ativa.
+    ///
+    /// Não é o mesmo que [`Self::set_enabled`]: a suspensão é automática e
+    /// não mexe no toggle manual do usuário.
+    pub fn set_suspended(&self, suspended: bool) {
+        self.sender.set_suspended(suspended);
+    }
+
     /// Atualiza a identidade anunciada.
     pub fn update(&self, config: BeaconConfig) {
         self.sender.update(config);

@@ -36,12 +36,12 @@ export function ServerStatus({ running, sessions, deviceName, onStart, onStop, l
         </div>
         <div className="stat-pill text-center">
           <div className="text-2xl font-bold text-neutral-900 dark:text-neutral-50">
-            {discovery?.enabled ? '✓' : '✗'}
+            {discovery?.suspended ? '‖' : discovery?.enabled ? '✓' : '✗'}
           </div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">Beacon</div>
           {discovery && (
             <div className="text-[10px] text-neutral-400 dark:text-neutral-500 mt-0.5">
-              {discovery.sent} enviados
+              {discovery.suspended ? 'pausado (sessão)' : `${discovery.sent} enviados`}
             </div>
           )}
         </div>

@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 
 use crate::audio::{AudioConfig, AudioControls, AudioPipeline, JitterMetrics, VOLUME_UNITY};
 use crate::config::ServerConfig;
-use crate::control::{ControlConfig, ControlServer, ControlStats, SessionInfo};
+use crate::control::{ControlConfig, ControlServer, ControlStats, SessionEvent, SessionInfo};
 use crate::discovery::{BeaconConfig, Discovery};
 use crate::state::default_host_name;
 
@@ -137,6 +137,35 @@ impl Server {
                 None
             }
         };
+
+        // Liga o ciclo de vida das sessões de controle a duas coisas:
+        //
+        // 1) O beacon de descoberta é **suspenso** enquanto há celular
+        //    conectado. O beacon serve para descobrir o PC; com a sessão
+        //    aberta ele é só ruído na rede (1 Hz de broadcast o tempo todo).
+        // 2) O jitter buffer é **esvaziado** quando o celular conecta: ele
+        //    reinicia a contagem de sequência dos frames ao começar a
+        //    transmitir, e sem o flush todo frame novo seria descartado
+        //    como "perdido" (o áudio ficaria mudo para sempre).
+        {
+            let discovery = Arc::clone(&discovery);
+            let audio = audio.clone();
+            control
+                .set_session_listener(Arc::new(move |event| match event {
+                    SessionEvent::Started(_) => {
+                        if let Some(audio) = &audio {
+                            audio.flush();
+                        }
+                        discovery.set_suspended(true);
+                    }
+                    SessionEvent::Ended(remaining) => {
+                        if remaining == 0 {
+                            discovery.set_suspended(false);
+                        }
+                    }
+                }))
+                .await;
+        }
 
         // Publica as métricas do jitter no canal de controle (1 Hz).
         if let Some(audio) = audio.clone() {

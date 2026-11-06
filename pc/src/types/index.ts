@@ -52,6 +52,8 @@ export interface DiscoveryStatus {
   sent: number;
   probesAnswered: number;
   enabled: boolean;
+  /** `true` quando o anúncio está pausado por haver sessão de controle ativa. */
+  suspended: boolean;
 }
 
 export interface CommandError {

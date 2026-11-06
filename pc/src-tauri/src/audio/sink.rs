@@ -277,6 +277,32 @@ impl Playout {
         }
     }
 
+    /// Amostras da **origem** (48 kHz) necessárias para produzir `frames`
+    /// amostras na taxa do dispositivo.
+    ///
+    /// Consumir pela taxa do dispositivo (e não pela da origem) fazia o
+    /// jitter buffer encher sem parar: a 44,1 kHz o servidor drenava
+    /// 44 100 amostras/s de uma fonte que produz 48 000/s.
+    fn source_samples_needed(&self, frames: usize) -> usize {
+        match &self.resampler {
+            Some(resampler) => resampler.input_needed(frames),
+            None => frames,
+        }
+    }
+
+    /// Garante os buffers internos para o período atual do dispositivo.
+    ///
+    /// O período (em frames) só é conhecido dentro do callback; os buffers
+    /// crescem uma única vez, quando o dispositivo muda.
+    fn ensure_capacity(&mut self, src_needed: usize, out_needed: usize) {
+        if self.mono_buf.len() < src_needed {
+            self.mono_buf.resize(src_needed, 0);
+        }
+        if self.resampled_buf.len() < out_needed {
+            self.resampled_buf.resize(out_needed, 0);
+        }
+    }
+
     /// Callback para formato I16.
     fn fill_i16(&mut self, data: &mut [i16]) {
         self.fill_interleaved(data);
@@ -291,25 +317,36 @@ impl Playout {
     /// Preenche `data` (interleaved multicanal) com amostras mono duplicadas.
     /// Usa buffers internos reutilizados (sem alocação no callback RT).
     fn fill_interleaved(&mut self, data: &mut [i16]) {
-        let Ok(mut guard) = self.buffer.try_lock() else {
-            data.fill(0);
-            return;
-        };
-
         let frames = data.len() / self.channels as usize;
         if frames == 0 {
             return;
         }
 
+        // Amostras da origem (48 kHz) necessárias para encher `frames`
+        // amostras na taxa do dispositivo.
+        let src_needed = self.source_samples_needed(frames);
+        self.ensure_capacity(src_needed, frames);
+
+        let Ok(mut guard) = self.buffer.try_lock() else {
+            data.fill(0);
+            return;
+        };
+
         // 1) Pega amostras mono contínuas do jitter buffer (48 kHz).
-        let status = guard.pop_into(&mut self.mono_buf[..frames]);
+        let status = guard.pop_into(&mut self.mono_buf[..src_needed]);
 
         // 2) Reamostra se necessário (48 kHz → taxa do dispositivo).
+        //    O slice de saída tem exatamente `frames` posições: assim o
+        //    reamostrador consome a origem na taxa correta (step por
+        //    amostra produzida) e não descarta amostras da frente.
         let (src, src_len) = if let Some(resampler) = &mut self.resampler {
-            let produced = resampler.process(&self.mono_buf[..frames], &mut self.resampled_buf);
+            let produced = resampler.process(
+                &self.mono_buf[..src_needed],
+                &mut self.resampled_buf[..frames],
+            );
             (&self.resampled_buf[..produced], produced)
         } else {
-            (&self.mono_buf[..frames], frames)
+            (&self.mono_buf[..src_needed], src_needed)
         };
 
         // 3) Escreve interleaved: cada amostra mono → todos os canais, com o
@@ -343,28 +380,26 @@ impl Playout {
             return;
         }
 
-        // Reutiliza um buffer i16 temporário alocado uma vez.
-        // Aloca se necessário (só na primeira chamada ou se tamanho mudar).
-        if self.mono_buf.len() < frames {
-            self.mono_buf.resize(frames, 0);
-            if let Some(r) = &self.resampler {
-                let max_out = (frames as f64 * r.step).ceil() as usize + 16;
-                self.resampled_buf.resize(max_out, 0);
-            }
-        }
+        // Mesma conta do caminho I16: a origem é consumida na taxa de 48 kHz,
+        // independentemente da taxa do dispositivo.
+        let src_needed = self.source_samples_needed(frames);
+        self.ensure_capacity(src_needed, frames);
 
         let Ok(mut guard) = self.buffer.try_lock() else {
             data.fill(0.0);
             return;
         };
 
-        let status = guard.pop_into(&mut self.mono_buf[..frames]);
+        let status = guard.pop_into(&mut self.mono_buf[..src_needed]);
 
         let (src, src_len) = if let Some(resampler) = &mut self.resampler {
-            let produced = resampler.process(&self.mono_buf[..frames], &mut self.resampled_buf);
+            let produced = resampler.process(
+                &self.mono_buf[..src_needed],
+                &mut self.resampled_buf[..frames],
+            );
             (&self.resampled_buf[..produced], produced)
         } else {
-            (&self.mono_buf[..frames], frames)
+            (&self.mono_buf[..src_needed], src_needed)
         };
 
         let mut src_idx = 0;
@@ -560,6 +595,82 @@ mod tests {
 
         controls.set_mute(false);
         assert!(!controls.muted());
+    }
+
+    /// Regressão: o jitter buffer é drenado na taxa da **origem** (48 kHz),
+    /// não na taxa do dispositivo.
+    ///
+    /// Antes, o callback consumia `frames` amostras da origem por callback —
+    /// ou seja, 44 100 amostras/s a 44,1 kHz, contra 48 000/s de produção. O
+    /// buffer enchia até o teto de 100 ms e ficava lá, com `fast_forwards`
+    /// subindo para sempre e um buraco de silêncio a cada callback.
+    #[test]
+    fn jitter_buffer_nao_cresce_com_dispositivo_em_outra_taxa() {
+        const SOURCE_RATE: u32 = 48_000;
+        const FRAME_SAMPLES: usize = 480;
+        const FRAME_MS: u32 = 10;
+
+        for (device_rate, frames) in [
+            (48_000_u32, 480_usize),
+            (44_100, 441),
+            (16_000, 160),
+            (96_000, 960),
+        ] {
+            let mut buffer = JitterBuffer::new(FRAME_SAMPLES, FRAME_MS, 30, 100);
+            let mut resampler = LinearResampler::new(SOURCE_RATE, device_rate);
+            let mut mono = vec![0_i16; 4_096];
+            let mut out = vec![0_i16; 4_096];
+
+            // Aquece o buffer com 3 frames (abaixo do teto de 10) — como no
+            // mundo real, o celular já transmitia quando o sink acordou.
+            for seq in 0..3_u32 {
+                buffer.push(seq, vec![1_000_i16; FRAME_SAMPLES]);
+            }
+
+            // 2 s em tempo real: chega 1 frame de 10 ms por callback do
+            // dispositivo, que consome o que precisa da origem.
+            let callbacks = 200_usize;
+            let mut consumed = 0_usize;
+            let mut produced = 0_usize;
+            for callback in 0..callbacks {
+                buffer.push(3 + callback as u32, vec![1_000_i16; FRAME_SAMPLES]);
+
+                let needed = resampler.input_needed(frames);
+                consumed += needed;
+                buffer.pop_into(&mut mono[..needed]);
+                produced += resampler.process(&mono[..needed], &mut out[..frames]);
+            }
+
+            let metrics = buffer.metrics();
+
+            // O dispositivo recebeu exatamente o que pediu...
+            assert_eq!(
+                produced,
+                callbacks * frames,
+                "taxa {device_rate}: produziu {produced}, esperado {}",
+                callbacks * frames
+            );
+
+            // ...e a origem foi consumida na taxa dela (48 kHz).
+            let expected_source = callbacks * FRAME_SAMPLES;
+            assert!(
+                consumed.abs_diff(expected_source) <= 2,
+                "taxa {device_rate}: consumiu {consumed} da origem, esperado ~{expected_source}"
+            );
+
+            // O buffer NÃO pode ter encherado até o teto nem descartado frames.
+            assert!(
+                metrics.buffer_ms <= 30,
+                "taxa {device_rate}: buffer em {} ms",
+                metrics.buffer_ms
+            );
+            assert_eq!(
+                metrics.fast_forwards, 0,
+                "taxa {device_rate}: descartou {} frames (fast_forwards)",
+                metrics.fast_forwards
+            );
+            assert_eq!(metrics.underruns, 0, "taxa {device_rate}: houve underrun");
+        }
     }
 
     #[test]

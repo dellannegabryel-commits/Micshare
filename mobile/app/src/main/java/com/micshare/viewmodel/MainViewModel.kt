@@ -187,6 +187,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             stopAudioService()
 
+            // Sem sessão, a descoberta volta a valer.
+            startDiscovery()
+
             _state.update {
                 it.copy(
                     phase = Phase.Idle,
@@ -214,6 +217,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             error = null,
                         )
                     }
+                    // Conectado: a descoberta não tem mais para que serve.
+                    // O beacon do PC continua chegando (1 Hz) e ia repovoando
+                    // a lista de servidores sem parar, gastando bateria e
+                    // PROCESSANDO frame a frame o que não interessa mais.
+                    stopDiscovery()
                     startAudioService(message.audioPort)
                 }
 
@@ -229,6 +237,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // O fluxo terminou: o PC encerrou a conexão.
         stopAudioService()
+        // Volta a procurar PCs (o beacon do PC é retomado quando a sessão
+        // termina).
+        startDiscovery()
         _state.update {
             it.copy(phase = Phase.Idle, error = "conexão encerrada pelo PC")
         }

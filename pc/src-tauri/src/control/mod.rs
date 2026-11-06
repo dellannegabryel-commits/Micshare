@@ -93,6 +93,18 @@ struct SessionEntry {
     tx: mpsc::UnboundedSender<CtrlMessage>,
 }
 
+/// Evento do ciclo de vida de uma sessão de controle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEvent {
+    /// Uma sessão foi criada. Payload: total de sessões ativas.
+    Started(usize),
+    /// Uma sessão foi encerrada. Payload: total de sessões ativas.
+    Ended(usize),
+}
+
+/// Notificado a cada mudança no número de sessões de controle.
+pub type SessionListener = Arc<dyn Fn(SessionEvent) + Send + Sync>;
+
 /// Servidor de controle WebSocket.
 pub struct ControlServer {
     listener: TcpListener,
@@ -103,6 +115,8 @@ pub struct ControlServer {
     reconnects: AtomicU64,
     /// IPs que já enviaram `hello` nesta execução (para contar reconexões).
     seen_ips: RwLock<HashSet<String>>,
+    /// Notificado sobre criação/encerramento de sessões.
+    session_listener: RwLock<Option<SessionListener>>,
 }
 
 impl ControlServer {
@@ -117,7 +131,26 @@ impl ControlServer {
             session_seq: AtomicU64::new(0),
             reconnects: AtomicU64::new(0),
             seen_ips: RwLock::new(HashSet::new()),
+            session_listener: RwLock::new(None),
         })
+    }
+
+    /// Registra o notificado de criação/encerramento de sessões.
+    ///
+    /// Usado pelo servidor para suspender o beacon de descoberta enquanto há
+    /// celular conectado e para esvaziar o jitter buffer quando o celular
+    /// começa a transmitir.
+    pub async fn set_session_listener(&self, listener: SessionListener) {
+        let mut slot = self.session_listener.write().await;
+        *slot = Some(listener);
+    }
+
+    /// Avisa o listener sobre uma mudança no número de sessões.
+    async fn notify_session_event(&self, event: SessionEvent) {
+        let listener = self.session_listener.read().await.clone();
+        if let Some(listener) = listener {
+            listener(event);
+        }
     }
 
     /// Porta efetivamente vinculada.
@@ -233,9 +266,19 @@ impl ControlServer {
 
         let ip = peer.ip().to_string();
         let mut session_id: Option<String> = None;
+        // Erro de leitura do socket. Antes, o `?` propagava o erro e pulava
+        // a limpeza da sessão, deixando a entrada no mapa (e o canal mpsc
+        // aberto) para sempre — um vazamento por desconexão abrupta.
+        let mut read_error: Option<DynError> = None;
 
         while let Some(message) = reader.next().await {
-            let message = message?;
+            let message = match message {
+                Ok(message) => message,
+                Err(err) => {
+                    read_error = Some(Box::new(err));
+                    break;
+                }
+            };
             if message.is_close() {
                 break;
             }
@@ -260,6 +303,17 @@ impl ControlServer {
                     frame_ms,
                     ..
                 }) => {
+                    // Uma conexão só pode abrir UMA sessão: um `hello`
+                    // repetido criaria uma segunda entrada no mapa e a
+                    // limpeza removeria só a última (vazando a primeira).
+                    if session_id.is_some() {
+                        let _ = tx.send(CtrlMessage::Error {
+                            code: "already_connected".into(),
+                            message: "hello já recebido nesta conexão".into(),
+                        });
+                        continue;
+                    }
+
                     if let Some(expected) = &self.config.pairing_token {
                         if &token != expected {
                             let _ = tx.send(CtrlMessage::Error {
@@ -297,6 +351,13 @@ impl ControlServer {
                             tx: tx.clone(),
                         },
                     );
+
+                    // Avisa ANTES do `welcome`: o celular só começa a
+                    // transmitir depois de recebê-lo, e o listener esvazia o
+                    // jitter buffer para a sequência recomeçar do zero.
+                    let active = self.sessions.read().await.len();
+                    self.notify_session_event(SessionEvent::Started(active))
+                        .await;
 
                     let _ = tx.send(CtrlMessage::Welcome {
                         session_id: id.clone(),
@@ -340,11 +401,17 @@ impl ControlServer {
         if let Some(id) = session_id {
             self.sessions.write().await.remove(&id);
             eprintln!("[controle] sessão {id} encerrada");
+            let remaining = self.sessions.read().await.len();
+            self.notify_session_event(SessionEvent::Ended(remaining))
+                .await;
         }
 
         drop(tx);
         let _ = writer_task.await;
-        Ok(())
+        match read_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     /// Gera o próximo identificador de sessão (`c0001`, `c0002`, ...).
