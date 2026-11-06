@@ -9,7 +9,7 @@ import org.junit.Test
  * Testes de contrato do protocolo Android.
  *
  * Fixam o wire format compartilhado com o servidor Rust
- * (`packages/pc-ui/src-tauri/src/protocol/`): qualquer mudança de um lado
+ * (`pc/src-tauri/src/protocol/`): qualquer mudança de um lado
  * quebra estes testes.
  */
 class ProtocolContractTest {

@@ -7,7 +7,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * Tipografia do app — espelha a escala de `packages/pc-ui/src/index.css`
+ * Tipografia do app — espelha a escala de `pc/src/index.css`
  * (mesmos pesos e tamanhos do tema Tailwind usado no PC).
  */
 val MicshareTypography = Typography(

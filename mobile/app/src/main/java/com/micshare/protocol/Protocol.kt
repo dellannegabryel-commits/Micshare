@@ -1,7 +1,7 @@
 package com.micshare.protocol
 
 /**
- * Constantes do protocolo — espelham `packages/pc-ui/src-tauri/src/protocol/`.
+ * Constantes do protocolo — espelham `pc/src-tauri/src/protocol/`.
  *
  * O PC é o servidor; o celular é o cliente:
  * - Descoberta: UDP 41234 (beacon JSON do PC, escutado pelo celular)

@@ -8,7 +8,7 @@ import java.net.InetAddress
 /**
  * Utilidades de rede local.
  *
- * Espelha `packages/pc-ui/src-tauri/src/discovery/targets.rs`: o beacon é
+ * Espelha `pc/src-tauri/src/discovery/targets.rs`: o beacon é
  * enviado para o broadcast global e para o broadcast de cada sub-rede IPv4.
  */
 object NetworkUtils {
