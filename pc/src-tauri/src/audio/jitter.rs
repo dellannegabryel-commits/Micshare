@@ -134,12 +134,25 @@ pub struct JitterBuffer {
     ts_deltas: VecDeque<u32>,
     last_capture_ts: Option<u32>,
     last_push_seq: Option<u32>,
-    pending: BTreeMap<u32, Vec<i16>>,
+    /// Última sequência **absoluta** aceita (u64) — high-water do stream.
+    ///
+    /// O celular conta em u32 e faz wrap depois de 2^32 frames (≈ 497 dias de
+    /// stream). Sem "desenrolar" o contador, o wrap faria a sequência andar
+    /// para trás e o buffer trataria o primeiro frame pós-wrap como perdido.
+    last_abs: Option<u64>,
+    /// `seq` cru (u32) correspondente a `last_abs` — base do desenrolamento.
+    last_raw_seq: Option<u32>,
+    /// Frames pendentes por sequência **absoluta** (u64).
+    ///
+    /// A chave é o `seq` do celular desenrolado: o wrap de u32 do emissor
+    /// vira um incremento normal em vez de um salto para trás.
+    pending: BTreeMap<u64, Vec<i16>>,
     /// Frame em reprodução (parcialmente consumido).
     current: Vec<i16>,
     /// Posição de leitura dentro de `current`.
     current_offset: usize,
-    next_seq: Option<u32>,
+    /// Próxima sequência **absoluta** esperada (u64).
+    next_seq: Option<u64>,
     warm: bool,
     /// Amostras da cauda de `current` retidas até o próximo frame chegar.
     ///
@@ -156,7 +169,7 @@ pub struct JitterBuffer {
     plc_left: usize,
     /// Frame real resgatado do `pending` durante uma lacuna — fica imune ao
     /// fast-forward enquanto o PLC toca.
-    plc_next: Option<(u32, Vec<i16>)>,
+    plc_next: Option<(u64, Vec<i16>)>,
     /// Amostras restantes da rampa de fade-in do frame retomado.
     fade_in_left: usize,
     /// Janela de 1 s com as amostras reproduzidas (base do FPS de playout).
@@ -202,6 +215,8 @@ impl JitterBuffer {
             ts_deltas: VecDeque::with_capacity(100),
             last_capture_ts: None,
             last_push_seq: None,
+            last_abs: None,
+            last_raw_seq: None,
         }
     }
 
@@ -211,21 +226,49 @@ impl JitterBuffer {
         self.push_with_ts(seq, capture_ts, samples);
     }
 
+    /// Converte a sequência crua (u32) do emissor em sequência absoluta (u64).
+    ///
+    /// A conversão usa a diferença **com sinal** em relação ao high-water
+    /// (`last_abs`): o wrap de u32 (`u32::MAX` → 0) vira `+1` em vez de um
+    /// salto de 2^32 para trás. Frames atrasados (chegando fora de ordem)
+    /// continuam mapeando para a posição correta e não movem o high-water.
+    fn to_absolute(&mut self, seq: u32) -> u64 {
+        let (Some(last_abs), Some(last_raw)) = (self.last_abs, self.last_raw_seq) else {
+            self.last_abs = Some(u64::from(seq));
+            self.last_raw_seq = Some(seq);
+            return u64::from(seq);
+        };
+
+        // Diferença com sinal no domínio cru (i32): ±2^31 frames cobrem
+        // qualquer reordenação real de rede.
+        let diff = seq.wrapping_sub(last_raw) as i32;
+        let candidate = if diff >= 0 {
+            last_abs.saturating_add(diff as u64)
+        } else {
+            last_abs.saturating_sub(diff.unsigned_abs() as u64)
+        };
+
+        if candidate >= last_abs {
+            self.last_abs = Some(candidate);
+            self.last_raw_seq = Some(seq);
+        }
+        candidate
+    }
+
     /// Insere um frame recebido com timestamp de captura explícito.
     ///
     /// Frames com sequência anterior à esperada são descartados (contados
-    /// como perdidos). O alvo do jitter buffer é adaptado a partir dos
-    /// deltas de `capture_ts` (janela de 100 frames).
+    /// como perdidos). O alvo do jitter buffer é adaptado a partir do p95
+    /// dos deltas de `capture_ts` (janela de 100 frames).
     pub fn push_with_ts(&mut self, seq: u32, capture_ts: u32, samples: Vec<i16>) {
         self.metrics.received += 1;
         self.recv_window.add(1);
 
-        if let Some(next) = self.next_seq {
-            // Distância com wraparound de u32: negativa = frame para trás.
-            let behind = next.wrapping_sub(seq);
-            let is_behind = behind > 0 && behind <= u32::MAX / 2;
+        let mut abs = self.to_absolute(seq);
 
-            if is_behind {
+        if let Some(next) = self.next_seq {
+            // Sequência absoluta: um frame atrasado tem `abs < next`.
+            if abs < next {
                 self.metrics.lost += 1;
 
                 // Um salto para trás maior que a janela de reordenação não é
@@ -234,8 +277,11 @@ impl JitterBuffer {
                 // — sem novo `hello`, logo sem `flush` no PC). Sem resync, todo
                 // frame seguinte cairia em `seq < next` e seria descartado
                 // para sempre: áudio mudo e perda ~100%.
-                if behind as usize > self.max_frames {
-                    self.resync(seq);
+                if (next - abs) as usize > self.max_frames {
+                    self.resync();
+                    // Reancora a linha do tempo no frame atual.
+                    abs = self.to_absolute(seq);
+                    self.next_seq = Some(abs);
                 } else {
                     return;
                 }
@@ -252,8 +298,11 @@ impl JitterBuffer {
             .unwrap_or(false);
         if consecutive {
             if let Some(prev) = self.last_capture_ts {
-                if capture_ts >= prev {
-                    let delta = capture_ts - prev;
+                // `capture_ts` é monotônico (u32, wrap em ~50 dias): o delta
+                // com wrap detectaria o salto. Deltas > 4× o frame são
+                // outliers (salto de relógio) e não entram na janela.
+                let delta = capture_ts.wrapping_sub(prev);
+                if delta > 0 && delta <= self.frame_ms.saturating_mul(4) {
                     self.ts_deltas.push_back(delta);
                     if self.ts_deltas.len() > 100 {
                         self.ts_deltas.pop_front();
@@ -262,16 +311,10 @@ impl JitterBuffer {
                 }
             }
         }
-        if self
-            .last_capture_ts
-            .map(|p| capture_ts >= p)
-            .unwrap_or(true)
-        {
-            self.last_capture_ts = Some(capture_ts);
-        }
+        self.last_capture_ts = Some(capture_ts);
         self.last_push_seq = Some(seq);
 
-        self.pending.insert(seq, samples);
+        self.pending.insert(abs, samples);
 
         // fast_forward: descarta o frame mais antigo quando a profundidade
         // supera o alvo + 3 (limitado por max_frames).
@@ -288,15 +331,18 @@ impl JitterBuffer {
         self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
     }
 
-    /// Reancora o buffer em `seq` depois de uma quebra de sequência.
+    /// Reancora o buffer depois de uma quebra de sequência.
     ///
-    /// Descarta o que estava pendurado e assume `seq` como próximo frame,
-    /// **sem** desaquecer: a reprodução continua imediatamente (não há razão
-    /// para pagar o warmup de novo quando o fluxo apenas recomeçou).
-    fn resync(&mut self, seq: u32) {
+    /// Descarta o que estava pendurado e zera o contador absoluto: o próximo
+    /// frame recebido vira a nova referência, **sem** desaquecer (a reprodução
+    /// continua imediatamente — não há razão para pagar o warmup de novo
+    /// quando o fluxo apenas recomeçou).
+    fn resync(&mut self) {
         self.pending.clear();
         self.reset_playback();
-        self.next_seq = Some(seq);
+        self.next_seq = None;
+        self.last_abs = None;
+        self.last_raw_seq = None;
         self.ts_deltas.clear();
         self.last_capture_ts = None;
         self.last_push_seq = None;
@@ -305,12 +351,20 @@ impl JitterBuffer {
     }
 
     /// Adapta `target_frames` com base no jitter medido (2..=8 frames).
+    ///
+    /// Usa o **p95** dos deltas da janela (não o máximo): um pico isolado não
+    /// deve inflar o alvo para 80 ms. Deltas acima de 4× `frame_ms` já foram
+    /// descartados como outlier na inserção (salto de relógio).
     fn adapt_target(&mut self) {
         if self.ts_deltas.len() < 2 {
             return;
         }
-        let max_delta = *self.ts_deltas.iter().max().unwrap_or(&self.frame_ms);
-        let jitter_ms = max_delta.saturating_sub(self.frame_ms);
+        let mut sorted: Vec<u32> = self.ts_deltas.iter().copied().collect();
+        sorted.sort_unstable();
+        // p95: rank ceil(0.95 * n) - 1 (0-indexado).
+        let rank = ((sorted.len() * 95).div_ceil(100)).saturating_sub(1);
+        let p95 = sorted[rank.min(sorted.len() - 1)];
+        let jitter_ms = p95.saturating_sub(self.frame_ms);
         // Cada frame de jitter além do frame_ms adiciona ~1 frame de folga.
         let extra = (jitter_ms / self.frame_ms.max(1)) as usize;
         let new_target = (3 + extra).clamp(2, 8);
@@ -410,17 +464,17 @@ impl JitterBuffer {
                     continue;
                 };
                 let expected = self.next_seq.unwrap_or(available);
-                let gap = available.wrapping_sub(expected);
-                if gap == 0 {
-                    // Contíguo: a cauda toca cheia (nada muda).
-                    self.tail_hold = 0;
-                    continue;
-                }
-                if gap > u32::MAX / 2 {
+                if available < expected {
                     // Frame atrasado que escapou do filtro do `push`: descarta
                     // em vez de tocar fora de ordem.
                     self.pending.remove(&available);
                     self.metrics.lost += 1;
+                    continue;
+                }
+                let gap = available - expected;
+                if gap == 0 {
+                    // Contíguo: a cauda toca cheia (nada muda).
+                    self.tail_hold = 0;
                     continue;
                 }
                 // Lacuna real: os frames `expected..available` não chegaram a
@@ -433,13 +487,14 @@ impl JitterBuffer {
                 // continuam chegando em tempo real, o fast-forward descarta os
                 // mais antigos e `available` está de novo à frente de `next`:
                 // outra lacuna, outro silêncio, para sempre (perda ~90%).
-                self.metrics.gaps += u64::from(gap);
+                self.metrics.gaps += gap;
                 let real = self.pending.remove(&available);
                 self.next_seq = Some(available.wrapping_add(1));
                 self.fade_out_total = self.tail_hold;
                 self.fade_out_left = self.tail_hold;
                 self.tail_hold = 0;
-                self.plc_left = (gap as usize).min(MAX_PLC_FRAMES) * self.frame_samples;
+                let gap_frames = usize::try_from(gap).unwrap_or(usize::MAX);
+                self.plc_left = gap_frames.min(MAX_PLC_FRAMES) * self.frame_samples;
                 self.plc_next = real.map(|samples| (available, samples));
                 continue;
             }
@@ -992,5 +1047,72 @@ mod tests {
             0.0,
             "fps de recepção não zerou após o flush"
         );
+    }
+
+    /// Um salto de relógio não pode inflar o alvo do jitter buffer.
+    ///
+    /// Com `max` na janela de deltas, um único outlier (NTP ajustando o
+    /// relógio, celular hibernando) empurrava o alvo para 8 frames (80 ms) —
+    /// 50 ms de latência jogados fora por causa de **um** frame ruim. O p95
+    /// ignora a cauda, e deltas acima de 4× `frame_ms` nem entram na janela.
+    #[test]
+    fn salto_de_relogio_nao_inflata_o_alvo() {
+        let mut buffer = buffer();
+        let mut out = vec![0_i16; FRAME];
+
+        // 20 frames regulares: deltas de 10 ms.
+        for seq in 0..20_u32 {
+            buffer.push_with_ts(seq, seq * 10, frame(0));
+            buffer.pop_into(&mut out);
+        }
+        assert!(
+            buffer.target_frames() <= 3,
+            "alvo já inflado antes do salto: {}",
+            buffer.target_frames()
+        );
+
+        // Salto de relógio: 1 s → 1.000 s (delta de ~1.000 s).
+        buffer.push_with_ts(20, 1_000_000, frame(0));
+        buffer.pop_into(&mut out);
+
+        assert!(
+            buffer.target_frames() <= 3,
+            "o salto de relógio inflou o alvo para {} frames",
+            buffer.target_frames()
+        );
+    }
+
+    /// O wrap de u32 do contador do celular não pode virar lacuna.
+    ///
+    /// O celular conta em u32: depois de 2^32 frames (≈ 497 dias de stream)
+    /// o `seq` volta a 0. Sem desenrolar o contador, o primeiro frame pós-wrap
+    /// pareceria um salto para trás de 4 bilhões de frames → resync, perda
+    /// contabilizada e áudio cortado.
+    #[test]
+    fn wrap_de_u32_nao_gera_gap() {
+        let mut buffer = buffer();
+        let mut out = vec![0_i16; FRAME];
+
+        // Últimos frames antes do wrap.
+        for seq in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
+            buffer.push_with_ts(seq, 1_000, frame(seq as i16));
+        }
+
+        // Pós-wrap: o contador volta a 0.
+        for seq in 0..3_u32 {
+            buffer.push_with_ts(seq, 1_100, frame(seq as i16));
+        }
+
+        assert_eq!(buffer.metrics().gaps, 0, "o wrap não pode virar lacuna");
+        assert_eq!(buffer.metrics().lost, 0, "o wrap não pode virar perda");
+        assert_eq!(buffer.metrics().resyncs, 0, "o wrap não pode reancorar");
+
+        // Os 6 frames saem em ordem (3 antes + 3 depois do wrap).
+        // Os valores são `seq as i16`: 0xFFFFFFFD → -3, 0xFFFFFFFE → -2,
+        // 0xFFFFFFFF → -1 e depois 0, 1, 2.
+        for expected in [-3_i16, -2, -1, 0, 1, 2] {
+            assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+            assert_eq!(out[0], expected, "esperava o frame {expected}");
+        }
     }
 }
