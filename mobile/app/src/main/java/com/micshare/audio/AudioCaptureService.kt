@@ -10,6 +10,8 @@ import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.micshare.R
@@ -27,6 +29,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.isActive
 
 /**
  * Serviço de foreground que captura o microfone e envia os frames ao PC.
@@ -43,9 +48,19 @@ class AudioCaptureService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var captureJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private var targetHost: String? = null
     private var targetPort: Int = Protocol.AUDIO_PORT
-    private var sequence: Int = 0
+    private var sequence: Long = 0
+
+    /** Fonte de áudio escolhida (`MediaRecorder.AudioSource`). */
+    private var audioSource: Int = AudioSourcePlanner.SOURCE_MIC
+
+    /** Microfone escolhido (`NO_DEVICE` = padrão do sistema). */
+    private var micDeviceId: Int = MicDevices.NO_DEVICE
+
+    /** AGC ligado pelo usuário (padrão: desligado — o app tem slider de volume). */
+    private var agcEnabled: Boolean = false
 
     /** Binder que expõe o estado e o controle de mute do serviço. */
     inner class LocalBinder : Binder() {
@@ -76,6 +91,10 @@ class AudioCaptureService : Service() {
 
         startForegroundNotification()
 
+        audioSource = intent?.getIntExtra(EXTRA_AUDIO_SOURCE, audioSource) ?: audioSource
+        micDeviceId = intent?.getIntExtra(EXTRA_MIC_DEVICE_ID, micDeviceId) ?: micDeviceId
+        agcEnabled = intent?.getBooleanExtra(EXTRA_AGC, agcEnabled) ?: agcEnabled
+
         val host = intent?.getStringExtra(EXTRA_HOST) ?: targetHost
         val port = intent?.getIntExtra(EXTRA_AUDIO_PORT, targetPort) ?: targetPort
         if (host.isNullOrBlank()) {
@@ -89,6 +108,7 @@ class AudioCaptureService : Service() {
 
     override fun onDestroy() {
         stopStreaming()
+        releaseWakeLock()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -101,25 +121,50 @@ class AudioCaptureService : Service() {
         targetPort = port
         sequence = 0
 
+        acquireWakeLock()
+
         captureJob = serviceScope.launch {
             val sender = AudioSender(host, port)
-            _status.update { it.copy(active = true, error = null, framesSent = 0, bytesSent = 0) }
+            _status.update { it.copy(active = true, error = null, framesSent = 0, bytesSent = 0, framesPerSecond = 0) }
+
+            // Contadores acumulados localmente; o status só é publicado a 2 Hz
+            // (cada emissão do StateFlow vira uma recomposição do Compose).
+            val throttle = StatusThrottle()
+            var framesSincePublish = 0
+            var bytesSincePublish = 0L
+            var windowStart = SystemClock.elapsedRealtime()
 
             try {
-                AudioCapture().frames().collect { pcm ->
+                AudioCapture(
+                    context = applicationContext,
+                    source = audioSource,
+                    deviceId = micDeviceId.takeIf { it != MicDevices.NO_DEVICE },
+                    includeAgc = agcEnabled,
+                ).frames().collect { frame ->
                     val flags = if (_status.value.muted) AudioFrame.FLAG_MUTED else 0
                     val datagram = AudioFrame.encode(
-                        seq = sequence++,
-                        captureTsMs = System.currentTimeMillis(),
+                        seq = (sequence++ and 0xFFFFFFFFL).toInt(),
+                        captureTsMs = frame.captureTsMs,
                         flags = flags,
-                        pcm = pcm,
+                        pcm = frame.pcm,
                     )
                     sender.send(datagram)
-                    _status.update {
-                        it.copy(
-                            framesSent = it.framesSent + 1,
-                            bytesSent = it.bytesSent + datagram.size,
-                        )
+                    framesSincePublish++
+                    bytesSincePublish += datagram.size
+                    val now = SystemClock.elapsedRealtime()
+                    if (throttle.shouldPublish(now)) {
+                        val elapsed = (now - windowStart).coerceAtLeast(1)
+                        val fps = (framesSincePublish * 1000L / elapsed).toInt()
+                        _status.update {
+                            it.copy(
+                                framesSent = it.framesSent + framesSincePublish,
+                                bytesSent = it.bytesSent + bytesSincePublish,
+                                framesPerSecond = fps,
+                            )
+                        }
+                        framesSincePublish = 0
+                        bytesSincePublish = 0
+                        windowStart = now
                     }
                 }
             } catch (cancellation: CancellationException) {
@@ -133,10 +178,36 @@ class AudioCaptureService : Service() {
         }
     }
 
+    /** Adquire o WakeLock parcial para evitar Doze durante o streaming. */
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Micshare::Streaming").apply {
+            setReferenceCounted(false)
+            acquire(WakeLockPolicy.LOCK_TIMEOUT_MS)
+        }
+        // Renovação periódica: o lock expira em 10 min; renovamos a cada 4 min
+        // (RENEWAL_INTERVAL_MS < LOCK_TIMEOUT_MS, invariante testada em WakeLockPolicy).
+        serviceScope.launch {
+            while (isActive) {
+                delay(WakeLockPolicy.RENEWAL_INTERVAL_MS)
+                runCatching { wakeLock?.acquire(WakeLockPolicy.LOCK_TIMEOUT_MS) }
+            }
+        }
+    }
+
+    /** Libera o WakeLock. */
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.release() }
+        wakeLock = null
+    }
+
     /** Encerra a captura e o envio de frames. */
     private fun stopStreaming() {
         captureJob?.cancel()
         captureJob = null
+        serviceScope.coroutineContext.cancelChildren()
+        releaseWakeLock()
         _status.update { it.copy(active = false) }
     }
 
@@ -198,5 +269,14 @@ class AudioCaptureService : Service() {
 
         /** Extra com a porta UDP de áudio. */
         const val EXTRA_AUDIO_PORT = "com.micshare.audio.PORT"
+
+        /** Extra com a fonte de áudio (`MediaRecorder.AudioSource`). */
+        const val EXTRA_AUDIO_SOURCE = "com.micshare.audio.SOURCE"
+
+        /** Extra com o id do microfone escolhido. */
+        const val EXTRA_MIC_DEVICE_ID = "com.micshare.audio.MIC_DEVICE_ID"
+
+        /** Extra que liga o AGC (padrão: desligado). */
+        const val EXTRA_AGC = "com.micshare.audio.AGC"
     }
 }

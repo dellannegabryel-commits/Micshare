@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, Info, Wifi, Database, Zap, RotateCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Info, Wifi, Database, Download, Zap, RotateCcw, Timer } from 'lucide-react';
 import { ServerStats } from '../types';
 
 interface StatsPanelProps {
@@ -42,7 +42,7 @@ export function StatsPanel({ stats }: StatsPanelProps) {
     );
   }
 
-  const { jitter, fps, lossPct, sessions, reconnects } = stats;
+  const { jitter, fps, lossPct, sessions, reconnects, latencyMs, latencyP95Ms } = stats;
 
   return (
     <div className="glass-panel p-6">
@@ -52,6 +52,20 @@ export function StatsPanel({ stats }: StatsPanelProps) {
       </h2>
 
       <div className="grid grid-cols-2 gap-3 mb-4">
+        <StatItem
+          label="Latência (rede)"
+          value={`${latencyMs.toFixed(1)}ms`}
+          icon={<Timer className="w-4 h-4 text-emerald-500" />}
+          color="bg-emerald-100 dark:bg-emerald-900/30"
+          warning={latencyMs > 100}
+        />
+        <StatItem
+          label="Latência p95"
+          value={`${latencyP95Ms.toFixed(1)}ms`}
+          icon={<Timer className="w-4 h-4 text-lime-500" />}
+          color="bg-lime-100 dark:bg-lime-900/30"
+          warning={latencyP95Ms > 100}
+        />
         <StatItem
           label="FPS (frames/s)"
           value={fps.toFixed(1)}
@@ -89,6 +103,13 @@ export function StatsPanel({ stats }: StatsPanelProps) {
 
       <div className="grid grid-cols-2 gap-3">
         <StatItem
+          label="FPS recebido"
+          value={jitter.receivedFps.toFixed(1)}
+          icon={<Download className="w-4 h-4 text-teal-500" />}
+          color="bg-teal-100 dark:bg-teal-900/30"
+          warning={jitter.receivedFps < 90 && sessions > 0}
+        />
+        <StatItem
           label="Underruns"
           value={jitter.underruns}
           icon={<AlertTriangle className="w-4 h-4 text-red-500" />}
@@ -107,6 +128,13 @@ export function StatsPanel({ stats }: StatsPanelProps) {
           icon={<RotateCcw className="w-4 h-4 text-pink-500" />}
           color="bg-pink-100 dark:bg-pink-900/30"
           warning={jitter.flushes > 0}
+        />
+        <StatItem
+          label="Reancoragens"
+          value={jitter.resyncs}
+          icon={<RotateCcw className="w-4 h-4 text-amber-500" />}
+          color="bg-amber-100 dark:bg-amber-900/30"
+          warning={jitter.resyncs > 0}
         />
         <StatItem
           label="Reconexões"
@@ -135,6 +163,10 @@ export function StatsPanel({ stats }: StatsPanelProps) {
           <div className="flex justify-between">
             <span className="text-neutral-500 dark:text-neutral-400">Sessões ativas:</span>
             <span className="text-neutral-900 dark:text-neutral-100">{sessions}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-neutral-500 dark:text-neutral-400">Pacotes rejeitados (IP sem sessão):</span>
+            <span className="text-neutral-900 dark:text-neutral-100">{jitter.rejected}</span>
           </div>
         </div>
       </details>

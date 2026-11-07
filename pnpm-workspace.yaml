@@ -1,5 +1,4 @@
 packages:
   - pc
-  - protocol
 allowBuilds:
   esbuild: true

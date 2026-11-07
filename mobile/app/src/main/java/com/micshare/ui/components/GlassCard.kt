@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Card translúcido com borda — equivalente ao `.glass-panel-elevated` do
- * app PC (`packages/pc-ui/src/index.css`).
+ * app PC (`pc/src/index.css`).
  */
 @Composable
 fun GlassCard(

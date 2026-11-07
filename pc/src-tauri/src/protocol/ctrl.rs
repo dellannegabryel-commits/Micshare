@@ -1,7 +1,7 @@
 //! Protocolo de controle (WebSocket, JSON) — `docs/arquitetura.md` §5.
 //!
-//! `t` é o discriminador. Cliente → servidor: `hello`, `mute`, `volume`, `bye`.
-//! Servidor → cliente: `welcome`, `stats`, `error`.
+//! `t` é o discriminador. Cliente → servidor: `hello`, `mute`, `volume`, `bye`,
+//! `ping`. Servidor → cliente: `welcome`, `stats`, `error`, `pong`.
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +44,10 @@ pub enum CtrlMessage {
         target_buffer_ms: u16,
         /// Codec efetivamente negociado.
         codec: String,
+        /// Mute atualmente aplicado pelo servidor (para o celular ressincronizar).
+        muted: bool,
+        /// Volume atualmente aplicado pelo servidor (`1.0` = 100%).
+        volume: f32,
     },
 
     /// Liga/desliga o mute no servidor.
@@ -61,6 +65,27 @@ pub enum CtrlMessage {
     /// Encerramento gracioso da sessão.
     Bye,
 
+    /// Sondagem de latência (celular → PC).
+    Ping {
+        /// Identificador do ping (eco).
+        id: u32,
+        /// Timestamp de origem no relógio do celular (ms, domínio do `capture_ts`).
+        t0_ms: f64,
+        /// Offset entre o relógio do celular e o do PC (ms), medido no ping
+        /// anterior. Ausente no primeiro ping.
+        offset_ms: Option<f64>,
+    },
+
+    /// Resposta do servidor à sondagem.
+    Pong {
+        /// Identificador do ping (eco).
+        id: u32,
+        /// Timestamp de origem, ecoado.
+        t0_ms: f64,
+        /// Timestamp do servidor ao receber o ping (ms).
+        t1_ms: f64,
+    },
+
     /// Métricas de diagnóstico, enviadas a 1 Hz.
     Stats {
         /// Percentual de frames perdidos.
@@ -71,6 +96,10 @@ pub enum CtrlMessage {
         seq_gaps: u32,
         /// Quantidade de reconexões.
         reconnects: u32,
+        /// Latência de rede mediana (capture → chegada no PC), em ms.
+        latency_ms: f64,
+        /// Latência de rede p95, em ms.
+        latency_p95_ms: f64,
     },
 
     /// Erro do servidor (ou recusa de pareamento).
@@ -118,6 +147,8 @@ mod tests {
             audio_port: 41235,
             target_buffer_ms: 30,
             codec: CODEC_PCM16.into(),
+            muted: false,
+            volume: 1.0,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["t"], "welcome");
@@ -125,6 +156,8 @@ mod tests {
         assert_eq!(json["audioPort"], 41235);
         assert_eq!(json["targetBufferMs"], 30);
         assert_eq!(json["codec"], "pcm16");
+        assert_eq!(json["muted"], false);
+        assert_eq!(json["volume"], 1.0);
     }
 
     #[test]
@@ -152,5 +185,60 @@ mod tests {
         assert_eq!(json["t"], "error");
         assert_eq!(json["code"], "bad_message");
         assert_eq!(json["message"], "mensagem inválida");
+    }
+
+    #[test]
+    fn stats_serializa_latencia() {
+        let json = serde_json::to_value(CtrlMessage::Stats {
+            loss_pct: 1.5,
+            buffer_ms: 30,
+            seq_gaps: 2,
+            reconnects: 1,
+            latency_ms: 12.5,
+            latency_p95_ms: 27.0,
+        })
+        .unwrap();
+
+        assert_eq!(json["t"], "stats");
+        assert_eq!(json["latencyMs"], 12.5);
+        assert_eq!(json["latencyP95Ms"], 27.0);
+    }
+
+    #[test]
+    fn ping_e_pong_roundtrip() {
+        let ping: CtrlMessage =
+            serde_json::from_str(r#"{"t":"ping","id":7,"t0Ms":1000.5,"offsetMs":-250.25}"#)
+                .unwrap();
+        assert_eq!(
+            ping,
+            CtrlMessage::Ping {
+                id: 7,
+                t0_ms: 1000.5,
+                offset_ms: Some(-250.25),
+            }
+        );
+
+        // Primeiro ping: ainda não há offset medido.
+        let first: CtrlMessage =
+            serde_json::from_str(r#"{"t":"ping","id":1,"t0Ms":10.0}"#).unwrap();
+        assert_eq!(
+            first,
+            CtrlMessage::Ping {
+                id: 1,
+                t0_ms: 10.0,
+                offset_ms: None,
+            }
+        );
+
+        let pong: CtrlMessage =
+            serde_json::from_str(r#"{"t":"pong","id":7,"t0Ms":1000.5,"t1Ms":1010.0}"#).unwrap();
+        assert_eq!(
+            pong,
+            CtrlMessage::Pong {
+                id: 7,
+                t0_ms: 1000.5,
+                t1_ms: 1010.0,
+            }
+        );
     }
 }

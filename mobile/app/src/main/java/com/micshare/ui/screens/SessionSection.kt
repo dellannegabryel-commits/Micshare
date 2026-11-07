@@ -22,11 +22,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.micshare.audio.TestTone
 import com.micshare.ui.components.ButtonVariant
 import com.micshare.ui.components.GlassCard
 import com.micshare.ui.components.PillButton
@@ -39,6 +41,8 @@ import com.micshare.ui.theme.Red500
 import com.micshare.ui.theme.Yellow400
 import com.micshare.viewmodel.Phase
 import com.micshare.viewmodel.UiState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -100,8 +104,8 @@ private fun ServerStatusCard(
                 modifier = Modifier.weight(1f),
             )
             StatPill(
-                value = state.audio.framesSent.toString(),
-                label = "Frames",
+                value = state.audio.framesPerSecond.toString(),
+                label = "FPS",
                 modifier = Modifier.weight(1f),
                 accent = MaterialTheme.colorScheme.primary,
             )
@@ -236,6 +240,7 @@ private fun AudioControlsCard(
 @Composable
 private fun StatsCard(state: UiState) {
     val stats = state.stats
+    val scope = rememberCoroutineScope()
 
     GlassCard {
         Text(
@@ -265,6 +270,20 @@ private fun StatsCard(state: UiState) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatPill(
+                    value = stats?.let { "${"%.1f".format(it.latencyMs)}ms" } ?: "—",
+                    label = "Latência",
+                    modifier = Modifier.weight(1f),
+                    accent = latencyAccent(stats?.latencyMs),
+                )
+                StatPill(
+                    value = stats?.let { "${"%.1f".format(it.latencyP95Ms)}ms" } ?: "—",
+                    label = "Latência p95",
+                    modifier = Modifier.weight(1f),
+                    accent = latencyAccent(stats?.latencyP95Ms),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatPill(
                     value = stats?.seqGaps?.toString() ?: "—",
                     label = "Gaps",
                     modifier = Modifier.weight(1f),
@@ -277,7 +296,24 @@ private fun StatsCard(state: UiState) {
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
+
+        PillButton(
+            text = "Tocar bipe de teste",
+            onClick = { scope.launch(Dispatchers.IO) { TestTone.play() } },
+            variant = ButtonVariant.Secondary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+        )
+
+        Text(
+            text = "Mede a latência acústica (Método A): grave no PC e rode " +
+                "scripts/onset-diff.py com as duas trilhas.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
+        )
     }
 }
 
@@ -296,4 +332,13 @@ private fun bufferAccent(bufferMs: Int?): Color? = when {
     bufferMs == null -> null
     bufferMs > 80 -> Yellow400
     else -> null
+}
+
+/** Cor de destaque da latência de rede. */
+@Composable
+private fun latencyAccent(latencyMs: Double?): Color? = when {
+    latencyMs == null -> null
+    latencyMs > 100 -> Red400
+    latencyMs > 50 -> Yellow400
+    else -> Green400
 }

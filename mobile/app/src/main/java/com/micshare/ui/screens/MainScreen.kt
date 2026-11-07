@@ -1,5 +1,6 @@
 package com.micshare.ui.screens
 
+import android.os.Build
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.micshare.audio.AudioSourcePlanner
 import com.micshare.network.DiscoveredServer
 import com.micshare.ui.components.ErrorCard
 import com.micshare.ui.components.StatusPill
@@ -47,6 +49,9 @@ fun MainScreen(
     onToggleMute: () -> Unit,
     onVolumeChange: (Float) -> Unit,
     onRefresh: () -> Unit,
+    onAudioSourceChange: (Int) -> Unit,
+    onMicChange: (Int) -> Unit,
+    onAgcChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -73,6 +78,17 @@ fun MainScreen(
                     scanning = state.scanning,
                     onConnect = onConnect,
                     onRefresh = onRefresh,
+                )
+
+                AudioInputSection(
+                    source = state.audioSource,
+                    micId = state.micDeviceId,
+                    agc = state.agcEnabled,
+                    mics = state.micDevices,
+                    sources = AudioSourcePlanner.availableSources(Build.VERSION.SDK_INT),
+                    onSourceChange = onAudioSourceChange,
+                    onMicChange = onMicChange,
+                    onAgcChange = onAgcChange,
                 )
             } else {
                 SessionSection(

@@ -345,6 +345,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        if: ${{ needs.prepare.outputs.publish == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Resumo dry-run
         if: ${{ needs.prepare.outputs.publish != 'true' }}
         shell: bash
@@ -384,7 +390,7 @@ jobs:
           # Terceira guarda: a tag precisa existir no repositorio. Sem isso,
           # o `gh release create` criaria a tag apontando para a branch padrao
           # (main), e os artefatos seriam publicados com a versao errada.
-          if ! gh api "repos/{owner}/{repo}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+          if ! gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
             echo "::error::A tag $TAG não existe no repositorio — envie a tag antes de publicar."
             exit 1
           fi
@@ -436,6 +442,7 @@ jobs:
           EOF
 
           gh release create "$TAG" ./release-assets/* \
+            --repo "${{ github.repository }}" \
             --title "Micshare v$VERSION" \
             --notes-file notes.md
 

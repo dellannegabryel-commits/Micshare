@@ -18,4 +18,9 @@ data class StreamingStatus(
     val sampleRate: Int = Protocol.SAMPLE_RATE,
     val muted: Boolean = false,
     val error: String? = null,
-)
+    /** Frames enviados no último segundo (FPS rolante). */
+    val framesPerSecond: Int = 0,
+) {
+    /** Alias para compatibilidade com nomenclatura curta. */
+    val fps: Int get() = framesPerSecond
+}

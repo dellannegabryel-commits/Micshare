@@ -17,10 +17,14 @@ A latência real inclui o cabo virtual (VB-CABLE/PipeWire/BlackHole) e o buffer 
 
 ### Procedimento
 1. No PC: inicie gravação no Discord/OBS (duas trilhas: entrada do Micshare + microfone do PC apontado para o celular)
-2. No celular: toque um **bipe curto** (arquivo de teste 1 kHz, 100 ms, -6 dBFS) enquanto o app transmite
-3. Pare a gravação
-4. No editor de áudio (Audacity, Reaper, etc.): meça o delta entre o onset do bipe na **trilha do microfone do PC** (som acústico vindo do celular) e o onset na **trilha do Micshare** (sinal processado)
+2. No celular: toque **"Tocar bipe de teste"** no app (1 kHz, 100 ms, −6 dBFS) enquanto o app transmite
+3. Pare a gravação e exporte as duas trilhas em WAV
+4. Meça o delta: `python scripts/onset-diff.py ACUSTICA.wav MICSHARE.wav`
+   (imprime o delta de cada bipe, a média e o p95)
 5. Repita **5 vezes** por cenário
+
+> Sem o script, o mesmo delta pode ser medido no Audacity/Reaper: onset do
+> bipe na trilha do microfone do PC × onset na trilha do Micshare.
 
 ### Cenários
 | Cenário | Wi-Fi | Buffer alvo | Observação |
@@ -41,16 +45,45 @@ A latência real inclui o cabo virtual (VB-CABLE/PipeWire/BlackHole) e o buffer 
 
 Útil durante desenvolvimento para ver tendências sem setup acústico.
 
-### Procedimento
-1. No PC: rode o servidor com `--verbose`
-2. No celular (ou fake client): transmita frames com `captureTs` sincronizado via NTP local ou `Date.now()` relativo ao boot
-3. No receptor: a cada frame, calcule `latencyMs = now() - captureTs + clockOffset`
-4. `clockOffset` estimado via handshake WebSocket (`welcome` traz `targetBufferMs`, usa-se RTT/2 do WS como aproximação)
-5. Colete 1000 amostras, descarte as primeiras 100 (warm-up)
+### Como funciona (implementado em v0.5.0)
+
+O celular mede o RTT pelo canal de controle e publica o **offset** entre o seu
+relógio e o do PC:
+
+1. O celular envia `ping { id, t0Ms, offsetMs }` a cada 2 s (`t0Ms` = relógio do
+   celular no domínio do `capture_ts`, u32).
+2. O PC responde `pong { id, t0Ms, t1Ms }` (`t1Ms` = relógio monotônico do PC).
+3. O celular calcula `rtt = t2 - t0` e `offset = t1 - t0 - rtt/2`, e devolve o
+   offset no **ping seguinte**.
+4. O PC mede, a cada frame, `latency = now_pc - (capture_ts + offset)` e guarda
+   uma janela de 200 amostras (mediana e p95).
+
+O offset é publicado no domínio do `capture_ts` (u32), então o wrap de 49,7
+dias do relógio do celular se cancela junto com o do `capture_ts` — o PC não
+precisa contar epochs.
+
+Onde aparece: painel do PC (`Latência (rede)` e `Latência p95`) e no app
+Android (`Latência` e `Latência p95`), com o mesmo número dos dois lados.
+
+### O que o número **exclui**
+
+O número mede só o trecho **captura → chegada no PC**. Não inclui:
+
+| Trecho | Custo típico |
+|---|---|
+| FIFO interno do `AudioRecord` | 0–80 ms (reduzido no v0.5.0) |
+| VB-Cable | 10–30 ms |
+| Buffer do Discord/OBS | 10–40 ms |
+| Caminho acústico (bipe no celular → microfone do PC) | 5–20 ms |
+
+A latência **até a reprodução** é aproximadamente `latência + bufferMs`.
 
 ### Limitações conhecidas
-- Erro de ±1 frame (10 ms) + jitter de rede + erro de sincronismo de relógio (até ~5 ms em LAN)
-- **Não substitui** o Método A para números de release
+- Erro ≈ `rtt/2` (1–10 ms em LAN) + deriva entre os cristais dos relógios.
+- Se o PC reiniciar, o número fica inválido por até 2 s (o próximo ping
+  re-sincroniza).
+- Medidas implausíveis (offset desatualizado) são descartadas, não publicadas.
+- **Não substitui** o Método A para números de release: é limite inferior.
 
 ---
 

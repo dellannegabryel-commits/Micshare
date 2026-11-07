@@ -6,23 +6,30 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.micshare.AppContainer
 import com.micshare.MicshareApplication
 import com.micshare.audio.AudioCaptureService
+import com.micshare.audio.AudioSourcePlanner
+import com.micshare.audio.MicDevice
+import com.micshare.audio.MicDevices
 import com.micshare.audio.StreamingStatus
 import com.micshare.network.ControlSession
 import com.micshare.network.DiscoveredServer
+import com.micshare.network.LatencyProbe
 import com.micshare.protocol.ControlMessage
 import com.micshare.protocol.Protocol
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -55,6 +62,10 @@ enum class Phase {
  * @property volume ganho enviado ao PC (`[0.0, 4.0]`).
  * @property stats métricas recebidas do PC (`stats`, 1 Hz).
  * @property audio estado do streaming de áudio.
+ * @property audioSource fonte de áudio escolhida (`MediaRecorder.AudioSource.*`).
+ * @property micDeviceId microfone escolhido (`NO_DEVICE` = padrão do sistema).
+ * @property micDevices microfones disponíveis no aparelho.
+ * @property agcEnabled ganho automático ligado.
  * @property error última mensagem de erro.
  */
 data class UiState(
@@ -68,6 +79,10 @@ data class UiState(
     val volume: Float = 1f,
     val stats: ControlMessage.Stats? = null,
     val audio: StreamingStatus = StreamingStatus(),
+    val audioSource: Int = AudioSourcePlanner.SOURCE_MIC,
+    val micDeviceId: Int = MicDevices.NO_DEVICE,
+    val micDevices: List<MicDevice> = emptyList(),
+    val agcEnabled: Boolean = false,
     val error: String? = null,
 )
 
@@ -84,16 +99,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var discoveryJob: Job? = null
     private var controlJob: Job? = null
     private var audioJob: Job? = null
+    private var pingJob: Job? = null
     private var controlSession: ControlSession? = null
     private var audioBinder: AudioCaptureService.LocalBinder? = null
     private var serviceConnection: ServiceConnection? = null
 
+    /**
+     * Sonda de latência (o PC é quem mede: precisa do offset entre os
+     * relógios, publicado aqui no `ping` seguinte).
+     */
+    private val latencyProbe = LatencyProbe { phoneClockMs() }
+
     init {
         viewModelScope.launch {
             container.settings.settings.collect { settings ->
-                _state.update { it.copy(volume = settings.volume) }
+                _state.update {
+                    it.copy(
+                        audioSource = settings.audioSource,
+                        micDeviceId = settings.micDeviceId,
+                        agcEnabled = settings.agcEnabled,
+                    )
+                }
             }
         }
+        refreshMicDevices()
         startDiscovery()
     }
 
@@ -171,7 +200,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             controlSession = session
-            container.settings.rememberServer(server.host, server.name)
             controlJob = viewModelScope.launch { consumeControlMessages(session) }
         }
     }
@@ -184,8 +212,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             controlSession = null
             controlJob?.cancel()
             controlJob = null
+            pingJob?.cancel()
+            pingJob = null
 
             stopAudioService()
+
+            // Sem sessão, a descoberta volta a valer.
+            startDiscovery()
+            // Um fone pode ter sido conectado durante a sessão.
+            refreshMicDevices()
 
             _state.update {
                 it.copy(
@@ -211,13 +246,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             phase = Phase.Connected,
                             sessionId = message.sessionId,
                             codec = message.codec,
+                            // O PC é o mixer: mute e ganho em vigor lá valem
+                            // aqui — o slider ressincroniza após reconectar.
+                            muted = message.muted,
+                            volume = message.volume,
                             error = null,
                         )
                     }
+                    // Conectado: a descoberta não tem mais para que serve.
+                    // O beacon do PC continua chegando (1 Hz) e ia repovoando
+                    // a lista de servidores sem parar, gastando bateria e
+                    // PROCESSANDO frame a frame o que não interessa mais.
+                    stopDiscovery()
+                    startPingLoop()
                     startAudioService(message.audioPort)
                 }
 
                 is ControlMessage.Stats -> _state.update { it.copy(stats = message) }
+
+                is ControlMessage.Pong -> latencyProbe.onPong(message.t0Ms, message.t1Ms)
 
                 is ControlMessage.Error -> _state.update {
                     it.copy(error = "${message.code}: ${message.message}")
@@ -229,8 +276,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // O fluxo terminou: o PC encerrou a conexão.
         stopAudioService()
+        // Volta a procurar PCs (o beacon do PC é retomado quando a sessão
+        // termina).
+        startDiscovery()
+        refreshMicDevices()
         _state.update {
             it.copy(phase = Phase.Idle, error = "conexão encerrada pelo PC")
+        }
+    }
+
+    /**
+     * Inicia o loop de `ping` (medição de latência).
+     *
+     * O offset medido no `pong` volta no `ping` seguinte — o PC usa para
+     * traduzir o `capture_ts` (relógio do celular) para o relógio dele.
+     */
+    private fun startPingLoop() {
+        if (pingJob?.isActive == true) return
+
+        pingJob = viewModelScope.launch {
+            var id = 0
+            while (isActive) {
+                id += 1
+                runCatching { controlSession?.send(latencyProbe.ping(id)) }
+                delay(PING_INTERVAL_MS)
+            }
         }
     }
 
@@ -250,7 +320,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(volume = clamped) }
         viewModelScope.launch {
             runCatching { controlSession?.send(ControlMessage.Volume(clamped)) }
-            container.settings.setVolume(clamped)
+        }
+    }
+
+    // --------------------------------------------------------- entrada de áudio
+
+    /** Escolhe a fonte de áudio (`MediaRecorder.AudioSource.*`). */
+    fun setAudioSource(source: Int) {
+        _state.update { it.copy(audioSource = source) }
+        persistAudioInput()
+    }
+
+    /** Escolhe o microfone (`NO_DEVICE` = padrão do sistema). */
+    fun setMicDevice(deviceId: Int) {
+        _state.update { it.copy(micDeviceId = deviceId) }
+        persistAudioInput()
+    }
+
+    /** Liga/desliga o ganho automático (AGC). */
+    fun setAgcEnabled(enabled: Boolean) {
+        _state.update { it.copy(agcEnabled = enabled) }
+        persistAudioInput()
+    }
+
+    /** Relê a lista de microfones (um fone pode ter sido conectado). */
+    fun refreshMicDevices() {
+        val devices = MicDevices.options(getApplication())
+        _state.update { it.copy(micDevices = devices) }
+    }
+
+    /** Grava a entrada de áudio escolhida. */
+    private fun persistAudioInput() {
+        val current = _state.value
+        viewModelScope.launch {
+            container.settings.setAudioInput(
+                source = current.audioSource,
+                deviceId = current.micDeviceId,
+                agc = current.agcEnabled,
+            )
         }
     }
 
@@ -269,6 +376,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val intent = Intent(context, AudioCaptureService::class.java).apply {
             putExtra(AudioCaptureService.EXTRA_HOST, server.host)
             putExtra(AudioCaptureService.EXTRA_AUDIO_PORT, audioPort)
+            putExtra(AudioCaptureService.EXTRA_AUDIO_SOURCE, _state.value.audioSource)
+            putExtra(AudioCaptureService.EXTRA_MIC_DEVICE_ID, _state.value.micDeviceId)
+            putExtra(AudioCaptureService.EXTRA_AGC, _state.value.agcEnabled)
         }
 
         ContextCompat.startForegroundService(context, intent)
@@ -323,6 +433,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         stopDiscovery()
         controlJob?.cancel()
+        pingJob?.cancel()
         runCatching { container.controlClient.close() }
         super.onCleared()
     }
@@ -330,5 +441,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         /** Tempo de vida de um servidor sem beacon (ms). */
         const val SERVER_TTL_MS = 5_000L
+
+        /** Intervalo entre as sondagens de latência (ms). */
+        const val PING_INTERVAL_MS = 2_000L
     }
 }
+
+/**
+ * Relógio do celular em ms, no domínio do `capture_ts` (u32).
+ *
+ * O `capture_ts` do frame é `elapsedRealtime()` truncado em 32 bits — o ping
+ * precisa estar no mesmo domínio, senão o offset do PC fica errado.
+ */
+private fun phoneClockMs(): Double =
+    (SystemClock.elapsedRealtime() and 0xFFFFFFFFL).toDouble()

@@ -3,7 +3,7 @@ package com.micshare.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Paleta do app — espelha as custom properties de `packages/pc-ui/src/index.css`.
+ * Paleta do app — espelha as custom properties de `pc/src/index.css`.
  *
  * O app Rust usa `sky-500` como cor primária, superfícies neutras e cores
  * semânticas para sucesso (verde), aviso (amarelo) e erro (vermelho).

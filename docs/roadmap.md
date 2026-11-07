@@ -9,8 +9,8 @@ Cada fase termina em um **gate**: um critério verificável, não uma opinião. 
 | **2 — Zero config** | Beacon de descoberta, hello/welcome sem código, reconexão, cliente de teste | cliente fake conecta e envia áudio em **< 10 s**, sem digitar IP, em 3 redes diferentes | ✅ concluída |
 | **3 — Controles** | WebSocket de controle, mute (duplo), volume, stats | mute responde em < 100 ms percebidos; volume audível em 10 passos; estado sobrevive a queda e reconexão do WS | ✅ concluída |
 | **4 — Integração de sistema** | Seleção de dispositivo, roteamento para VB-CABLE/PipeWire/BlackHole, instalador do PC com checagem de cabo virtual | Discord reconhece e transmite o microfone; `npm run setup` valida cabo ausente e explica o que instalar | ✅ concluída |
-| **5 — PC UI (Tauri)** | UI nativa Rust + Tauri 3, MSI/NSIS installer, config persistida, logs, stats em tempo real | build gera instalador assinado; UI controla servidor; stats atualizam a 1 Hz; persiste device/porta | ✅ concluída |
-| **6 — Voice Quality** | Opus codec, AEC/AGC/NS hardware, seletor de microfone mobile, buffer adaptativo refinado | Opus < 40 kbit/s; AEC/AGC/NS ativos; mic selector funciona; buffer alvo 2-10 frames adaptativo | 🔄 em andamento |
+| **5 — PC UI (Tauri)** | UI nativa Rust + Tauri 2, MSI/NSIS installer, config persistida, logs, stats em tempo real | build gera instalador assinado; UI controla servidor; stats atualizam a 1 Hz; persiste device/porta | ✅ concluída |
+| **6 — Voice Quality** | AEC/NS via `audiofx`, seletor de microfone mobile, PLC com fade, latência instrumentada | AEC/NS ativos na fonte MIC; mic selector funciona; PLC sem clique em 20% e 50% de perda; latência de rede visível no PC e no celular | ✅ concluída (v0.5.0) |
 | **7 — Polimento** | Ícone de bandeja, auto-start, QR code, TLS/DTLS se requisito, assinatura de código | tray icon com mute; auto-start Windows; QR fallback; release assinado | ⏳ planejado |
 
 Total até MVP utilizável (fim da Fase 4): **~6 semanas** (concluído).
@@ -33,7 +33,7 @@ O cliente mobile é **Kotlin nativo com Jetpack Compose** (não React Native).
 | **2** | **Kotlin app**: AudioRecord → UDP 41235, OkHttp WebSocket 41236, BeaconListener 41234, Compose UI |
 | **3** | Mute/volume/dual mute na UI, stats em tempo real |
 | **4** | Teste de integração Discord/OBS com VB-CABLE |
-| **6** | AEC/AGC/NS hardware, seletor de microfone, Opus encoder |
+| **6** | AEC/NS via `audiofx`, seletor de microfone, PLC com fade, latência instrumentada |
 
 **Por que Kotlin (e não React Native):**
 - `AudioRecord`/`AudioTrack` são APIs estáveis do Android; RN precisa de módulos nativos + config plugins frágeis
@@ -44,9 +44,9 @@ O cliente mobile é **Kotlin nativo com Jetpack Compose** (não React Native).
 
 iOS (Swift) fica para depois do MVP Android validado.
 
-## PC Server: Rust + Tauri 3 — Fase 5
+## PC Server: Rust + Tauri 2 — Fase 5
 
-O servidor PC foi reescrito em **Rust com Tauri 3** (não Node.js/TypeScript).
+O servidor PC foi reescrito em **Rust com Tauri 2** (não Node.js/TypeScript).
 
 | Componente | Tecnologia |
 |---|---|

@@ -35,6 +35,10 @@ sealed interface ControlMessage {
         val audioPort: Int,
         val targetBufferMs: Int,
         val codec: String,
+        /** Mute remoto em vigor no PC (o celular ressincroniza o botão). */
+        val muted: Boolean = false,
+        /** Ganho remoto em vigor no PC (`[0.0, 4.0]`). */
+        val volume: Float = 1f,
     ) : ControlMessage
 
     /** Liga/desliga o mute no servidor. */
@@ -52,6 +56,31 @@ sealed interface ControlMessage {
     @SerialName("bye")
     object Bye : ControlMessage
 
+    /** Sondagem de latência (celular → PC). */
+    @Serializable
+    @SerialName("ping")
+    data class Ping(
+        /** Identificador do ping (eco). */
+        val id: Int,
+        /** Timestamp de origem no relógio do celular (ms). */
+        val t0Ms: Double,
+        /** Offset entre o relógio do celular e o do PC (ms), medido no ping
+         *  anterior. `null` no primeiro ping. */
+        val offsetMs: Double? = null,
+    ) : ControlMessage
+
+    /** Resposta do servidor à sondagem. */
+    @Serializable
+    @SerialName("pong")
+    data class Pong(
+        /** Identificador do ping (eco). */
+        val id: Int,
+        /** Timestamp de origem, ecoado. */
+        val t0Ms: Double,
+        /** Timestamp do servidor ao receber o ping (ms). */
+        val t1Ms: Double,
+    ) : ControlMessage
+
     /** Métricas de diagnóstico, enviadas a 1 Hz. */
     @Serializable
     @SerialName("stats")
@@ -60,6 +89,10 @@ sealed interface ControlMessage {
         val bufferMs: Int,
         val seqGaps: Int,
         val reconnects: Int,
+        /** Latência de rede mediana (ms), medida pelo PC. */
+        val latencyMs: Double = 0.0,
+        /** Latência de rede p95 (ms), medida pelo PC. */
+        val latencyP95Ms: Double = 0.0,
     ) : ControlMessage
 
     /** Erro do servidor. */

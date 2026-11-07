@@ -39,6 +39,38 @@ impl LinearResampler {
         (self.step - 1.0).abs() < f64::EPSILON
     }
 
+    /// Quantas amostras de **entrada** são necessárias para produzir
+    /// `output_count` amostras de saída.
+    ///
+    /// O sink precisa consumir da origem exatamente `step` amostras por
+    /// amostra de saída. Consumir pela taxa do **dispositivo** (e não pela da
+    /// **origem**) fazia o jitter buffer encher sem parar: a 44,1 kHz o
+    /// servidor drenava 44 100 amostras/s de uma fonte que produz 48 000/s,
+    /// e ainda metia um buraco de silêncio a cada callback.
+    ///
+    /// O cálculo usa a fase corrente para não descartar amostras da origem:
+    /// o bloco devolvido cobre exatamente a posição em que a próxima amostra
+    /// de saída será produzida.
+    #[must_use]
+    pub fn input_needed(&self, output_count: usize) -> usize {
+        if self.is_passthrough() {
+            return output_count;
+        }
+
+        // Posição, na origem, da amostra produzida logo após as
+        // `output_count` saídas.
+        let pos_end = self.phase + output_count as f64 * self.step;
+        let base = pos_end.floor();
+
+        // step >= 1 (origem mais rápida que o dispositivo): consome
+        // `floor(pos_end)` e a fase devolve fica em [0, 1).
+        // step < 1 (dispositivo mais rápido): consome `floor(pos_end) + 1`
+        // para não pular a amostra que ainda está em jogo na borda.
+        let needed = if self.step >= 1.0 { base } else { base + 1.0 };
+
+        (needed.max(0.0) as usize).max(1)
+    }
+
     /// Converte um bloco de entrada, escrevendo em `output`.
     ///
     /// Retorna quantas amostras foram geradas. A fase é preservada entre as

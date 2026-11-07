@@ -67,11 +67,15 @@ async fn hello_recebe_welcome() {
             audio_port,
             target_buffer_ms,
             codec,
+            muted,
+            volume,
         } => {
             assert!(session_id.starts_with('c'));
             assert_eq!(audio_port, 41235);
             assert_eq!(target_buffer_ms, 30);
             assert_eq!(codec, "pcm16");
+            assert!(!muted, "mute inicial deve ser falso");
+            assert_eq!(volume, 1.0, "volume inicial deve ser 100%");
         }
         other => panic!("esperava welcome, recebeu {other:?}"),
     }
@@ -232,6 +236,52 @@ async fn mute_e_volume_sao_aplicados() {
     let state = server.state().await;
     assert!(state.muted, "mute não foi aplicado");
     assert_eq!(state.volume, 4.0, "volume não foi clampado em [0,4]");
+
+    // O ganho remoto é o que o pipeline de áudio aplica de fato.
+    let gain = server.remote_gain();
+    assert!(gain.muted(), "mute não chegou ao ganho remoto");
+    assert_eq!(
+        gain.volume(),
+        4_000,
+        "volume não chegou ao ganho remoto em fixed-point"
+    );
+}
+
+/// O `hello` com codec `opus` deve ser respondido com `pcm16`: o pipeline
+/// só decodifica PCM, então negociar Opus criava um buraco negro (áudio
+/// mudo sem erro).
+#[tokio::test]
+async fn hello_com_opus_responde_pcm16() {
+    let addr = start_server().await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{}", connect_addr(addr)))
+        .await
+        .unwrap();
+
+    let hello = CtrlMessage::Hello {
+        v: 1,
+        token: String::new(),
+        sample_rate: 48000,
+        channels: 1,
+        codec: "opus".into(),
+        frame_ms: 10,
+    };
+    ws.send(Message::Text(serde_json::to_string(&hello).unwrap().into()))
+        .await
+        .unwrap();
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let welcome: CtrlMessage = serde_json::from_str(&response.into_text().unwrap()).unwrap();
+
+    match welcome {
+        CtrlMessage::Welcome { codec, .. } => {
+            assert_eq!(codec, "pcm16", "o servidor não pode negociar opus");
+        }
+        other => panic!("esperava welcome, recebeu {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -276,4 +326,79 @@ async fn conexao_tcp_simples_e_aceita() {
     let addr = start_server().await;
     let stream = TcpStream::connect(connect_addr(addr)).await.unwrap();
     drop(stream);
+}
+
+/// O `ping` do celular é ecoado em `pong` e o offset publicado no ping
+/// precisa chegar ao rastreador de latência (sem ele o PC não mede nada).
+#[tokio::test]
+async fn ping_recebe_pong_e_publica_o_offset() {
+    let server = ControlServer::bind(ControlConfig {
+        port: 0,
+        audio_port: 41235,
+        target_buffer_ms: 30,
+        pairing_token: None,
+    })
+    .await
+    .unwrap();
+    let addr = server.local_addr().unwrap();
+    let server = std::sync::Arc::new(server);
+    let runner = std::sync::Arc::clone(&server);
+    tokio::spawn(async move {
+        let _ = runner.run().await;
+    });
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{}", connect_addr(addr)))
+        .await
+        .unwrap();
+
+    let hello = CtrlMessage::Hello {
+        v: 1,
+        token: String::new(),
+        sample_rate: 48000,
+        channels: 1,
+        codec: "pcm16".into(),
+        frame_ms: 10,
+    };
+    ws.send(Message::Text(serde_json::to_string(&hello).unwrap().into()))
+        .await
+        .unwrap();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+        .await
+        .unwrap()
+        .unwrap();
+
+    ws.send(Message::Text(
+        r#"{"t":"ping","id":3,"t0Ms":1000.0,"offsetMs":-250.0}"#.into(),
+    ))
+    .await
+    .unwrap();
+
+    // O `stats` (1 Hz) pode chegar antes — procura o `pong`.
+    let mut pong = None;
+    for _ in 0..4 {
+        let response = tokio::time::timeout(std::time::Duration::from_secs(3), ws.next())
+            .await
+            .expect("sem mensagem")
+            .unwrap()
+            .unwrap();
+        let text = response.into_text().unwrap();
+        if let Ok(CtrlMessage::Pong {
+            id, t0_ms, t1_ms, ..
+        }) = serde_json::from_str::<CtrlMessage>(&text)
+        {
+            pong = Some((id, t0_ms, t1_ms));
+            break;
+        }
+    }
+
+    let (id, t0_ms, t1_ms) = pong.expect("nenhum pong recebido");
+    assert_eq!(id, 3, "id do pong não foi ecoado");
+    assert_eq!(t0_ms, 1000.0, "t0 do ping não foi ecoado");
+    assert!(t1_ms > 0.0, "t1 inválido: {t1_ms}");
+
+    assert_eq!(
+        server.clock_offset().get_ms(),
+        Some(-250.0),
+        "o offset publicado não chegou ao rastreador"
+    );
 }

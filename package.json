@@ -1,11 +1,11 @@
 {
   "name": "micshare",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Microfone P2P em rede local — celular como microfone de entrada do PC",
-  "workspaces": ["pc", "protocol"],
+  "workspaces": ["pc"],
   "scripts": {
-    "typecheck": "tsc -b --noEmit protocol && npm --prefix pc exec -- tsc --noEmit",
+    "typecheck": "npm --prefix pc run typecheck",
     "install:pc": "npm --prefix pc install",
     "dev:pc": "npm --prefix pc run dev"
   },

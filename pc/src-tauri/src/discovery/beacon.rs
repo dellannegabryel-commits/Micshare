@@ -51,8 +51,10 @@ pub struct BeaconStatus {
     pub sent: u64,
     /// Probes respondidos desde o início.
     pub probes_answered: u64,
-    /// Se o anúncio está ativo.
+    /// Se o anúncio está ativo (toggle do usuário).
     pub enabled: bool,
+    /// Se o anúncio está pausado por haver sessão de controle ativa.
+    pub suspended: bool,
 }
 
 /// Emissor de beacon: mantém o socket, o loop de announce e o estado.
@@ -61,6 +63,7 @@ pub struct BeaconSender {
     targets: Vec<SocketAddr>,
     config: watch::Sender<BeaconConfig>,
     enabled: watch::Sender<bool>,
+    suspended: watch::Sender<bool>,
     status: watch::Sender<BeaconStatus>,
 }
 
@@ -86,6 +89,7 @@ impl BeaconSender {
 
         let (config, _) = watch::channel(config);
         let (enabled, _) = watch::channel(true);
+        let (suspended, _) = watch::channel(false);
         let (status, _) = watch::channel(BeaconStatus::default());
 
         Ok(Self {
@@ -93,6 +97,7 @@ impl BeaconSender {
             targets,
             config,
             enabled,
+            suspended,
             status,
         })
     }
@@ -114,6 +119,24 @@ impl BeaconSender {
         let mut status = *self.status.borrow();
         status.enabled = enabled;
         self.status.send_replace(status);
+    }
+
+    /// Suspende ou retoma o anúncio por causa de uma sessão de controle ativa.
+    ///
+    /// Enquanto há um celular conectado, continuar anunciando é desperdício:
+    /// o beacon serve para **descobrir** o PC, e o app já sabe onde ele está.
+    /// A suspensão é independente do toggle manual ([`Self::set_enabled`]) —
+    /// os dois se combinam.
+    pub fn set_suspended(&self, suspended: bool) {
+        self.suspended.send_replace(suspended);
+        let mut status = *self.status.borrow();
+        status.suspended = suspended;
+        self.status.send_replace(status);
+    }
+
+    /// `true` se o anúncio está ativo (toggle ligado e não suspenso).
+    fn is_announcing(&self) -> bool {
+        *self.enabled.borrow() && !*self.suspended.borrow()
     }
 
     /// Snapshot do estado atual.
@@ -140,7 +163,7 @@ impl BeaconSender {
     /// Uma falha em um destino não derruba os demais — erros são logados e o
     /// beacon segue sendo enviado para o resto.
     pub async fn announce_once(&self) -> std::io::Result<bool> {
-        if !*self.enabled.borrow() {
+        if !self.is_announcing() {
             return Ok(false);
         }
 
@@ -175,24 +198,40 @@ impl BeaconSender {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    if self.announce_once().await? {
-                        let mut status = *self.status.borrow();
-                        status.sent += 1;
-                        status.enabled = true;
-                        self.status.send_replace(status);
+                    match self.announce_once().await {
+                        Ok(true) => {
+                            let mut status = *self.status.borrow();
+                            status.sent += 1;
+                            status.enabled = true;
+                            self.status.send_replace(status);
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            eprintln!("[discovery] falha no announce: {err}");
+                        }
                     }
                 }
                 received = self.socket.recv_from(&mut probe_buf) => {
-                    let (len, from) = received?;
-                    let Ok(request) = serde_json::from_slice::<DiscoveryRequest>(&probe_buf[..len])
-                    else {
-                        continue;
-                    };
-                    if request == DiscoveryRequest::Probe {
-                        self.answer_probe(from).await?;
-                        let mut status = *self.status.borrow();
-                        status.probes_answered += 1;
-                        self.status.send_replace(status);
+                    match received {
+                        Ok((len, from)) => {
+                            let Ok(request) = serde_json::from_slice::<DiscoveryRequest>(&probe_buf[..len])
+                            else {
+                                continue;
+                            };
+                            if request == DiscoveryRequest::Probe {
+                                if let Err(err) = self.answer_probe(from).await {
+                                    eprintln!("[discovery] falha ao responder probe {from}: {err}");
+                                } else {
+                                    let mut status = *self.status.borrow();
+                                    status.probes_answered += 1;
+                                    self.status.send_replace(status);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("[discovery] erro no recv_from: {err}");
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
                     }
                 }
             }

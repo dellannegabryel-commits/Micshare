@@ -3,7 +3,6 @@ export interface ServerConfig {
   ctrlPort: number;
   deviceSubstring: string | null;
   name: string | null;
-  defaultCodec: 'pcm' | 'opus';
 }
 
 export interface ServerStats {
@@ -18,6 +17,10 @@ export interface ServerStats {
   volume: number;
   /** Reconexões (novos `hello` de IPs que já se conectaram). */
   reconnects: number;
+  /** Latência de rede mediana (capture → chegada no PC), em ms. */
+  latencyMs: number;
+  /** Latência de rede p95, em ms. */
+  latencyP95Ms: number;
 }
 
 export interface JitterMetrics {
@@ -28,6 +31,12 @@ export interface JitterMetrics {
   underruns: number;
   fastForwards: number;
   flushes: number;
+  /** Reancoragens após quebra de sequência (o celular reiniciou a contagem). */
+  resyncs: number;
+  /** Frames recebidos por segundo (janela de 1 s). */
+  receivedFps: number;
+  /** Datagramas descartados por virem de um IP sem sessão de controle. */
+  rejected: number;
 }
 
 export interface AudioDevice {
@@ -52,6 +61,8 @@ export interface DiscoveryStatus {
   sent: number;
   probesAnswered: number;
   enabled: boolean;
+  /** `true` quando o anúncio está pausado por haver sessão de controle ativa. */
+  suspended: boolean;
 }
 
 export interface CommandError {
