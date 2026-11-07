@@ -10,12 +10,12 @@
 //! de amostras diferente do tamanho do frame.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 /// Métricas do jitter buffer (espelhadas no painel do app PC).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JitterMetrics {
     /// Frames recebidos.
@@ -34,6 +34,64 @@ pub struct JitterMetrics {
     pub flushes: u64,
     /// Reancoragens após quebra de sequência (o emissor reiniciou a contagem).
     pub resyncs: u64,
+    /// Frames recebidos por segundo (janela móvel de 1 s).
+    pub received_fps: f32,
+    /// Datagramas descartados por virem de um IP sem sessão de controle.
+    pub rejected: u64,
+}
+
+/// Janela móvel de taxa (últimos 1 s).
+///
+/// Uma média "desde o boot" nunca volta a zero: uma sessão de 10 min deixa o
+/// número contaminado para sempre. Aqui cada unidade guarda seu instante, e a
+/// taxa é a soma das unidades dentro da janela — sem histórico infinito.
+#[derive(Debug)]
+struct RateWindow {
+    events: VecDeque<(Instant, u64)>,
+    /// Duração da janela.
+    window: Duration,
+}
+
+impl RateWindow {
+    fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+            window: Duration::from_secs(1),
+        }
+    }
+
+    /// Soma `units` e descarta o que saiu da janela.
+    fn add(&mut self, units: u64) {
+        let now = Instant::now();
+        self.events.push_back((now, units));
+        while let Some((at, _)) = self.events.front() {
+            if now.duration_since(*at) <= self.window {
+                break;
+            }
+            self.events.pop_front();
+        }
+    }
+
+    /// Zera a janela (troca de sessão).
+    fn reset(&mut self) {
+        self.events.clear();
+    }
+
+    /// Unidades por segundo dentro da janela.
+    ///
+    /// Divide pela duração **fixa** da janela: a taxa é "quantas unidades
+    /// passaram nos últimos 1 s". Dividir pelo tempo decorrido daria
+    /// milhares de fps nos primeiros milissegundos (3 frames em 50 µs).
+    fn rate(&self) -> f32 {
+        let now = Instant::now();
+        let total: u64 = self
+            .events
+            .iter()
+            .filter(|(at, _)| now.duration_since(*at) <= self.window)
+            .map(|(_, count)| *count)
+            .sum();
+        total as f32 / self.window.as_secs_f32()
+    }
 }
 
 /// Resultado de uma leitura do jitter buffer.
@@ -50,6 +108,19 @@ pub enum PopStatus {
     /// O destino foi preenchido com silêncio.
     Underrun,
 }
+
+/// Amostras do fade (fade-out do PLC e fade-in da retomada).
+///
+/// A rampa tem `FADE + 1` amostras: começa em `1.0` (ou `0.0`, no fade-in) e
+/// termina exatamente em `0.0` (ou `1.0`) — assim não sobra degrau na
+/// transição.
+const FADE: usize = 64;
+
+/// Teto do PLC: 3 frames = 30 ms a 48 kHz.
+///
+/// Acima disso o tempo é comprimido (o áudio real retoma antes), mas o áudio
+/// **nunca** vira silêncio permanente.
+const MAX_PLC_FRAMES: usize = 3;
 
 /// Buffer de jitter com reordenação e preenchimento de lacunas.
 #[derive(Debug)]
@@ -70,8 +141,28 @@ pub struct JitterBuffer {
     current_offset: usize,
     next_seq: Option<u32>,
     warm: bool,
-    played_samples: u64,
-    started_at: Instant,
+    /// Amostras da cauda de `current` retidas até o próximo frame chegar.
+    ///
+    /// A cauda só pode ser liberada com a informação do frame seguinte:
+    /// contíguo → toca cheia (nada muda); lacuna → toca com rampa 1→0
+    /// (fade-out). Sem essa retenção, o degrau entre o último sample real e o
+    /// silêncio do PLC vira clique audível.
+    tail_hold: usize,
+    /// Amostras da cauda ainda em fade-out (rampa 1→0, termina em 0 exato).
+    fade_out_left: usize,
+    /// Total de amostras da rampa de fade-out (normaliza o ganho).
+    fade_out_total: usize,
+    /// Amostras de PLC (silêncio) ainda a emitir.
+    plc_left: usize,
+    /// Frame real resgatado do `pending` durante uma lacuna — fica imune ao
+    /// fast-forward enquanto o PLC toca.
+    plc_next: Option<(u32, Vec<i16>)>,
+    /// Amostras restantes da rampa de fade-in do frame retomado.
+    fade_in_left: usize,
+    /// Janela de 1 s com as amostras reproduzidas (base do FPS de playout).
+    play_window: RateWindow,
+    /// Janela de 1 s com os frames recebidos (base do FPS de recepção).
+    recv_window: RateWindow,
     metrics: JitterMetrics,
 }
 
@@ -99,8 +190,14 @@ impl JitterBuffer {
             current_offset: 0,
             next_seq: None,
             warm: false,
-            played_samples: 0,
-            started_at: Instant::now(),
+            tail_hold: 0,
+            fade_out_left: 0,
+            fade_out_total: 0,
+            plc_left: 0,
+            plc_next: None,
+            fade_in_left: 0,
+            play_window: RateWindow::new(),
+            recv_window: RateWindow::new(),
             metrics: JitterMetrics::default(),
             ts_deltas: VecDeque::with_capacity(100),
             last_capture_ts: None,
@@ -121,6 +218,7 @@ impl JitterBuffer {
     /// deltas de `capture_ts` (janela de 100 frames).
     pub fn push_with_ts(&mut self, seq: u32, capture_ts: u32, samples: Vec<i16>) {
         self.metrics.received += 1;
+        self.recv_window.add(1);
 
         if let Some(next) = self.next_seq {
             // Distância com wraparound de u32: negativa = frame para trás.
@@ -197,8 +295,7 @@ impl JitterBuffer {
     /// para pagar o warmup de novo quando o fluxo apenas recomeçou).
     fn resync(&mut self, seq: u32) {
         self.pending.clear();
-        self.current.clear();
-        self.current_offset = 0;
+        self.reset_playback();
         self.next_seq = Some(seq);
         self.ts_deltas.clear();
         self.last_capture_ts = None;
@@ -222,9 +319,9 @@ impl JitterBuffer {
 
     /// Preenche `out` com amostras mono contínuas.
     ///
-    /// O buffer é sempre preenchido por inteiro: as lacunas e a falta de dados
-    /// viram silêncio, de modo que o sink sempre recebe um fluxo contínuo
-    /// (sem trancos) na taxa de origem do pipeline.
+    /// O buffer é sempre preenchido por inteiro: as lacunas viram PLC
+    /// (silêncio com fade) e a falta de dados vira silêncio, de modo que o
+    /// sink sempre recebe um fluxo contínuo (sem trancos) na taxa de origem.
     pub fn pop_into(&mut self, out: &mut [i16]) -> PopStatus {
         out.fill(0);
 
@@ -246,19 +343,118 @@ impl JitterBuffer {
         let mut underrun = false;
 
         while written < out.len() {
-            // 1) Continua o frame em reprodução.
-            if self.current_offset < self.current.len() {
-                let take = (out.len() - written).min(self.current.len() - self.current_offset);
-                out[written..written + take].copy_from_slice(
-                    &self.current[self.current_offset..self.current_offset + take],
-                );
-                self.current_offset += take;
+            // 1) Fade-out da cauda retida: rampa 1→0 (termina em 0 exato).
+            //    Vem antes do PLC porque é a transição *para* o silêncio.
+            if self.fade_out_left > 0 {
+                let take = (out.len() - written)
+                    .min(self.fade_out_left)
+                    .min(self.current.len() - self.current_offset);
+                let total = self.fade_out_total;
+                for i in 0..take {
+                    let remaining = self.fade_out_left - i;
+                    let gain = if total > 1 {
+                        (remaining - 1) as f32 / (total - 1) as f32
+                    } else {
+                        0.0
+                    };
+                    let sample = self.current[self.current_offset + i];
+                    out[written + i] = (sample as f32 * gain) as i16;
+                }
                 written += take;
+                self.current_offset += take;
+                self.fade_out_left -= take;
                 continue;
             }
 
-            // 2) Busca o próximo frame disponível.
-            let Some(available) = self.pending.keys().next().copied() else {
+            // 2) PLC: silêncio puro (já zerado por `out.fill(0)`).
+            if self.plc_left > 0 {
+                let take = (out.len() - written).min(self.plc_left);
+                written += take;
+                self.plc_left -= take;
+                continue;
+            }
+
+            // 3) Reprodução do frame atual (fade-in na retomada).
+            let playable = self.current.len().saturating_sub(self.tail_hold);
+            if self.current_offset < playable {
+                let take = (out.len() - written).min(playable - self.current_offset);
+                if self.fade_in_left > 0 {
+                    let ramp = take.min(self.fade_in_left);
+                    for i in 0..ramp {
+                        // Ganho subindo de 1/FADE até 1: a retomada entra
+                        // suavemente depois do silêncio do PLC.
+                        let gain = (FADE - self.fade_in_left + 1) as f32 / FADE as f32;
+                        let sample = self.current[self.current_offset + i];
+                        out[written + i] = (sample as f32 * gain) as i16;
+                        self.fade_in_left -= 1;
+                    }
+                    out[written + ramp..written + take].copy_from_slice(
+                        &self.current[self.current_offset + ramp..self.current_offset + take],
+                    );
+                } else {
+                    out[written..written + take].copy_from_slice(
+                        &self.current[self.current_offset..self.current_offset + take],
+                    );
+                }
+                written += take;
+                self.current_offset += take;
+                continue;
+            }
+
+            // 4) Fim do frame: decide o que vem a seguir.
+            if self.tail_hold > 0 {
+                let Some(&available) = self.pending.keys().next() else {
+                    // Nada pendente: a cauda toca cheia (não há lacuna
+                    // conhecida para fading) e o underrun cobre o resto.
+                    self.tail_hold = 0;
+                    continue;
+                };
+                let expected = self.next_seq.unwrap_or(available);
+                let gap = available.wrapping_sub(expected);
+                if gap == 0 {
+                    // Contíguo: a cauda toca cheia (nada muda).
+                    self.tail_hold = 0;
+                    continue;
+                }
+                if gap > u32::MAX / 2 {
+                    // Frame atrasado que escapou do filtro do `push`: descarta
+                    // em vez de tocar fora de ordem.
+                    self.pending.remove(&available);
+                    self.metrics.lost += 1;
+                    continue;
+                }
+                // Lacuna real: os frames `expected..available` não chegaram a
+                // tempo. Conta a perda, resgata o frame real (imune ao
+                // fast-forward) e programa o PLC limitado.
+                //
+                // O PLC substitui o buraco por silêncio **e** consome o frame
+                // disponível: ficar `gap_frames` callbacks mudo sem consumir
+                // nada era um loop sem saída — durante o silêncio os frames
+                // continuam chegando em tempo real, o fast-forward descarta os
+                // mais antigos e `available` está de novo à frente de `next`:
+                // outra lacuna, outro silêncio, para sempre (perda ~90%).
+                self.metrics.gaps += u64::from(gap);
+                let real = self.pending.remove(&available);
+                self.next_seq = Some(available.wrapping_add(1));
+                self.fade_out_total = self.tail_hold;
+                self.fade_out_left = self.tail_hold;
+                self.tail_hold = 0;
+                self.plc_left = (gap as usize).min(MAX_PLC_FRAMES) * self.frame_samples;
+                self.plc_next = real.map(|samples| (available, samples));
+                continue;
+            }
+
+            // 5) Pega o próximo frame: o resgatado do PLC (com fade-in) ou o
+            //    primeiro pendente.
+            if let Some((seq, samples)) = self.plc_next.take() {
+                self.current = samples;
+                self.current_offset = 0;
+                self.tail_hold = FADE.min(self.current.len());
+                self.fade_in_left = FADE.min(self.current.len());
+                self.next_seq = Some(seq.wrapping_add(1));
+                continue;
+            }
+            let Some(&available) = self.pending.keys().next() else {
                 underrun = true;
                 self.metrics.underruns += 1;
                 self.metrics.buffer_ms = 0;
@@ -268,45 +464,15 @@ impl JitterBuffer {
                 self.next_seq = None;
                 break;
             };
-
-            // Sem referência (aquecimento, underrun ou resync): ancora no
-            // frame mais antigo disponível. Não há como saber o que faltou,
-            // então não conta lacuna.
-            let next = match self.next_seq {
-                Some(next) => next,
-                None => {
-                    self.next_seq = Some(available);
-                    available
-                }
-            };
-
-            if available > next {
-                // Lacuna real: os frames `next..available` não chegaram a
-                // tempo. Conta a perda, mas **não** reproduz o buraco em
-                // silêncio.
-                //
-                // Ficar `gap_frames` callbacks mudo era um loop sem saída:
-                // durante o silêncio os frames continuam chegando em tempo
-                // real, o fast-forward descarta os mais antigos e, quando o
-                // silêncio acaba, `available` já está de novo à frente de
-                // `next` — outra lacuna, outro silêncio, para sempre. Com o
-                // período de 10 ms do WASAPI (480 amostras = 1 frame), uma
-                // única perda travava o pipeline em silêncio permanente e a
-                // perda medida ia a ~90%. O certo é reancorar na borda viva
-                // e voltar a tocar imediatamente.
-                self.metrics.gaps += u64::from(available - next);
-                self.next_seq = Some(available);
-            }
-
-            if let Some(samples) = self.pending.remove(&available) {
-                self.current = samples;
-                self.current_offset = 0;
-            }
-            self.next_seq = Some(available + 1);
+            let samples = self.pending.remove(&available).expect("frame pendente");
+            self.current = samples;
+            self.current_offset = 0;
+            self.tail_hold = FADE.min(self.current.len());
+            self.next_seq = Some(available.wrapping_add(1));
             self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
         }
 
-        self.played_samples += written as u64;
+        self.play_window.add(written as u64);
 
         if underrun {
             self.metrics.buffer_ms = 0;
@@ -325,16 +491,30 @@ impl JitterBuffer {
         }
     }
 
+    /// Zera o estado de reprodução: frame em curso, cauda retida, fades e
+    /// PLC pendente.
+    fn reset_playback(&mut self) {
+        self.current.clear();
+        self.current_offset = 0;
+        self.tail_hold = 0;
+        self.fade_out_left = 0;
+        self.fade_out_total = 0;
+        self.plc_left = 0;
+        self.plc_next = None;
+        self.fade_in_left = 0;
+    }
+
     /// Esvazia o buffer (troca de sessão ou reset do stream).
     pub fn flush(&mut self) {
         self.pending.clear();
-        self.current.clear();
-        self.current_offset = 0;
+        self.reset_playback();
         self.warm = false;
         self.next_seq = None;
         self.ts_deltas.clear();
         self.last_capture_ts = None;
         self.last_push_seq = None;
+        self.play_window.reset();
+        self.recv_window.reset();
         self.metrics.flushes += 1;
         self.metrics.buffer_ms = 0;
     }
@@ -342,17 +522,32 @@ impl JitterBuffer {
     /// Snapshot das métricas.
     #[must_use]
     pub fn metrics(&self) -> JitterMetrics {
-        self.metrics
+        let mut metrics = self.metrics;
+        metrics.received_fps = self.received_fps();
+        metrics
     }
 
-    /// Frames reproduzidos por segundo (média desde o início do stream).
+    /// Conta um datagrama descartado na origem (IP sem sessão de controle).
+    pub fn note_rejected(&mut self) {
+        self.metrics.rejected += 1;
+    }
+
+    /// Frames reproduzidos por segundo (janela de 1 s).
     #[must_use]
     pub fn fps(&self) -> f32 {
-        let elapsed = self.started_at.elapsed().as_secs_f32();
-        if elapsed <= 0.0 || self.frame_samples == 0 {
+        if self.frame_samples == 0 {
             return 0.0;
         }
-        (self.played_samples as f32 / elapsed) / self.frame_samples as f32
+        self.play_window.rate() / self.frame_samples as f32
+    }
+
+    /// Frames recebidos por segundo (janela de 1 s).
+    ///
+    /// Diagnostica a rede: o playout é fixo em 48 kHz, então só a taxa de
+    /// recepção mostra se o celular está chegando no ritmo certo.
+    #[must_use]
+    pub fn received_fps(&self) -> f32 {
+        self.recv_window.rate()
     }
 
     /// Profundidade alvo do buffer, em frames.
@@ -497,8 +692,12 @@ mod tests {
         assert_eq!(buffer.metrics().resyncs, 0);
     }
 
+    /// Lacuna: conta a perda, preenche o buraco com PLC e retoma o áudio real.
+    ///
+    /// O buraco não é mais pulado (descontinuidade = clique): vira silêncio, e
+    /// o frame real toca em seguida.
     #[test]
-    fn lacuna_conta_a_perda_e_reancora_no_frame_seguinte() {
+    fn lacuna_conta_a_perda_e_retoma_o_audio_real() {
         let mut buffer = buffer();
         buffer.push(0, frame(0));
         buffer.push(1, frame(1));
@@ -510,11 +709,129 @@ mod tests {
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
         assert_eq!(out[0], 1);
 
-        // Lacuna: conta 1 frame perdido, mas toca o frame 3 imediatamente —
-        // o buraco não é reproduzido em silêncio.
+        // A lacuna (1 frame) vira PLC: silêncio de 1 frame.
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
-        assert_eq!(out[0], 3, "deveria reancorar no frame disponível");
+        assert!(out.iter().all(|s| *s == 0), "esperava o PLC em silêncio");
         assert_eq!(buffer.metrics().gaps, 1);
+
+        // O frame real toca em seguida (com fade-in).
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert_eq!(out[63], 3, "o frame real deveria retomar");
+    }
+
+    /// O PLC é limitado a 3 frames (30 ms): acima disso o tempo é comprimido,
+    /// mas o áudio real continua — silêncio permanente é pior que salto.
+    #[test]
+    fn plc_limita_o_silencio_e_retoma_o_audio() {
+        let mut buffer = buffer();
+        buffer.push(0, frame(0));
+        buffer.push(51, frame(51)); // faltam 50 frames
+        buffer.push(52, frame(52));
+        buffer.push(53, frame(53));
+
+        let mut out = vec![0_i16; FRAME];
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert_eq!(buffer.metrics().gaps, 50, "os 50 frames perdidos contam");
+
+        // No máximo 3 frames de PLC (30 ms).
+        let mut silencio = 0;
+        for _ in 0..3 {
+            assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+            if out.iter().all(|s| *s == 0) {
+                silencio += 1;
+            }
+        }
+        assert_eq!(silencio, 3, "o PLC deveria ter coberto 3 frames");
+
+        // O frame real toca logo depois.
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert_eq!(out[63], 51);
+    }
+
+    /// O fade evita o clique: a cauda some com rampa 1→0 (terminando em 0
+    /// exato) e o frame retomado entra com rampa 0→1.
+    #[test]
+    fn plc_faz_fade_sem_clique() {
+        const AMPLITUDE: i16 = 8_000;
+        let mut buffer = buffer();
+        buffer.push(0, frame(AMPLITUDE));
+        buffer.push(2, frame(AMPLITUDE)); // falta o 1
+        buffer.push(3, frame(AMPLITUDE));
+        buffer.push(4, frame(AMPLITUDE));
+
+        let mut out = vec![0_i16; FRAME];
+        // Frame 0 (416 amostras) + cauda em fade-out (64 amostras).
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert_eq!(out[FRAME - 1], 0, "o fade-out tem de terminar em 0");
+        let maior_salto = out[1..]
+            .windows(2)
+            .map(|w| i32::from(w[1]) - i32::from(w[0]))
+            .map(i32::abs)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            maior_salto <= i32::from(AMPLITUDE) / 4,
+            "degrau de {maior_salto} na rampa de fade-out"
+        );
+
+        // PLC: silêncio puro.
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert!(out.iter().all(|s| *s == 0));
+
+        // Retomada: o primeiro sample entra pelo fade-in (degrau pequeno).
+        assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        assert!(
+            u32::from(out[0].unsigned_abs()) <= u32::from(AMPLITUDE.unsigned_abs()) / 4,
+            "o fade-in não suavizou a retomada: {}",
+            out[0]
+        );
+    }
+
+    /// O PLC preserva a linha do tempo: cada frame perdido vira exatamente
+    /// 1 frame de PLC, então o playout cobre os mesmos 200 frames que o
+    /// celular enviou (nada de salto, nada de atraso acumulado).
+    #[test]
+    fn plc_preserva_a_linha_do_tempo() {
+        let mut buffer = buffer();
+        let mut out = vec![0_i16; FRAME];
+        let mut proximo = 0_u32; // próximo frame a enviar
+        let mut silencios = 0;
+
+        for tocados in 0..200_u32 {
+            // O celular mantém 3 frames de lead (o jitter buffer fica ~30 ms
+            // fundo, como no sistema real) e continua mandando depois dos
+            // 200 slots: sem um frame posterior, a perda do último não é
+            // detectável como lacuna (viraria underrun).
+            while proximo < 205 && proximo <= tocados + 3 {
+                if proximo % 5 != 4 {
+                    buffer.push(proximo, frame((proximo % 50 + 1) as i16));
+                }
+                proximo += 1;
+            }
+
+            assert_eq!(
+                buffer.pop_into(&mut out),
+                PopStatus::Data,
+                "underrun no frame {tocados}"
+            );
+            if out.iter().all(|s| *s == 0) {
+                silencios += 1;
+            }
+        }
+
+        // 200 slots de timeline: 160 frames reais + 40 de PLC.
+        assert_eq!(
+            silencios, 40,
+            "cada frame perdido tem de virar 1 frame de PLC"
+        );
+        assert_eq!(buffer.metrics().gaps, 40);
+
+        // Sobrou só a folga do buffer (nada acumulou).
+        let mut extra = 0;
+        while buffer.pop_into(&mut out) != PopStatus::Underrun {
+            extra += 1;
+        }
+        assert!(extra <= 5, "o buffer acumulou {extra} frames de sobra");
     }
 
     /// Regressão do bug de "90% de perda ao pausar os beacons".
@@ -636,5 +953,44 @@ mod tests {
         let mut out = vec![0_i16; FRAME];
         assert_eq!(buffer.metrics().flushes, 1);
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Warmup);
+    }
+
+    /// O FPS precisa ser uma **janela** de 1 s, não uma média desde o boot.
+    ///
+    /// Média desde o boot nunca volta a zero: uma sessão de 10 min deixa o
+    /// número contaminado para sempre, e o painel mostra "100 fps" num
+    /// pipeline parado. A janela zera entre sessões (o `flush` marca a troca
+    /// de celular) e acompanha o ritmo real de chegada.
+    #[test]
+    fn fps_e_rolante_e_zera_entre_sessoes() {
+        let mut buffer = buffer();
+        let mut out = vec![0_i16; FRAME];
+
+        // 100 frames de 10 ms = 1 s de áudio (o warmup consome 2 dos 100
+        // callbacks, então 98 frames saem para o sink).
+        for seq in 0..100_u32 {
+            buffer.push(seq, frame(1));
+            buffer.pop_into(&mut out);
+        }
+
+        let fps = buffer.fps();
+        let received = buffer.received_fps();
+        assert!(
+            (fps - 98.0).abs() < 2.0,
+            "fps de playout fora do esperado: {fps}"
+        );
+        assert!(
+            (received - 100.0).abs() < 1.0,
+            "fps de recepção fora do esperado: {received}"
+        );
+
+        // Troca de sessão: o buffer esvazia e as janelas zeram.
+        buffer.flush();
+        assert_eq!(buffer.fps(), 0.0, "fps não zerou após o flush");
+        assert_eq!(
+            buffer.received_fps(),
+            0.0,
+            "fps de recepção não zerou após o flush"
+        );
     }
 }
