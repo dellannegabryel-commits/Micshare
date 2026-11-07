@@ -1,6 +1,6 @@
 # Arquitetura — Micshare (microfone P2P em rede local)
 
-Versão 0.1 · escopo de MVP · complementa `docs/documenta_o_de_arquitetura_microfone_p2p.md` (briefing original), ao qual corrige nos pontos marcados com **Δ**.
+Versão 0.5 · complementa `docs/documenta_o_de_arquitetura_microfone_p2p.md` (briefing original), ao qual corrige nos pontos marcados com **Δ**.
 
 ## 1. Objetivo
 
@@ -9,14 +9,23 @@ Transformar um celular em microfone de entrada do PC, via Wi-Fi local, com latê
 ### Não-objetivos do MVP
 - Áudio pela internet (fora da LAN), multi-sala, N clientes simultâneos.
 - Criptografia em trânsito (TLS/DTLS). Ver §10.
-- Cancelamento de eco/ruído, AGC, supressão de ruído — o SO do celular já faz na captura.
 - Driver próprio de áudio no kernel.
+
+### Processamento do áudio no celular
+O cancelamento de eco, a supressão de ruído e o AGC **não são garantidos pelo
+SO** na fonte `MIC` — o `AudioRecord` entrega o sinal cru. Desde a v0.5.0 o app
+aplica os efeitos de `android.media.audiofx` (AEC/NS) quando a fonte é `MIC` e
+o aparelho expõe o efeito; o AGC é opt-in (briga com o slider de volume do
+app). Em `VOICE_COMMUNICATION` o HAL já faz o processamento e o app **não**
+aplica efeitos (evita processamento duplo); em `UNPROCESSED` não se aplica
+nada. O usuário escolhe a fonte, o microfone e o AGC no app — ver
+`mobile/app/src/main/java/com/micshare/audio/AudioSourcePlan.kt`.
 
 ## 2. Topologia
 
 ```
 ┌────────────┐                                ┌──────────────────────────────┐
-│  Celular   │  1) beacon UDP broadcast :41234 │  PC (Rust + Tauri 3)         │
+│  Celular   │  1) beacon UDP broadcast :41234 │  PC (Rust + Tauri 2)         │
 │  (Kotlin)  │ <──────────────────────────────│  beacon + descoberta         │
 │            │                                │                              │
 │ captura    │  2) WebSocket :41236 (controle) │  servidor controle           │
@@ -74,14 +83,38 @@ O celular captura em blocos de 10 ms e envia **imediatamente**, sem agrupamento,
 
 O buffer é o que transforma UDP em áudio audível. Sem ele, jitter de Wi-Fi de 5–20 ms vira estalo; com buffer fixo grande, vira latência inútil.
 
-Implementação: ring buffer circular de amostras, escrito por frame recebido e lido pelo sink em blocos do mesmo tamanho.
+Implementação: mapa de frames prontos indexado por `seq` (`BTreeMap<u32, Vec<i16>>` em `pc/src-tauri/src/audio/jitter.rs`), com um frame em reprodução (`current`) e posição de leitura (`current_offset`). O sink lê blocos do mesmo tamanho do frame (480 amostras = 10 ms).
 
 Parâmetros:
-- Profundidade alvo **adaptativa**: começa em 3 frames (30 ms). A cada 1 s, mede o jitter (`max(captureTs_i − captureTs_{i-1}) − frameMs` em janela de 100 frames) e ajusta alvo entre 2 e 8 frames.
-- Fila vazia na leitura → escreve silêncio e **zera o alvo para o mínimo** (sinal de que estamos acima do necessário).
+- Profundidade alvo **adaptativa**: começa em 3 frames (30 ms). O alvo é ajustado pelo **p95** dos deltas de `captureTs` numa janela de 100 frames, entre 2 e 8 frames. Deltas acima de 4× `frameMs` são descartados como *outlier* — é o que impede que um único salto de relógio infle o alvo para 80 ms.
+- Leitura com a fila vazia → escreve silêncio e **aumenta** o alvo (sinal de que o buffer está curto demais). Underrun não zera o alvo.
 - Fila acima de `alvo + 3` → descarta o frame mais antigo (fast-forward), nunca acumula. Trava de segurança: profundidade > 250 ms → flush total + ressincronização por `seq`.
-- Gap de `seq` de n frames → repete o último frame útil com fade linear (PLC zero-order), máximo 3 frames consecutivos; acima disso, silêncio. PLC de ordem zero é 5 linhas e evita o "som robótico de metralhadora" de repetir o mesmo bloco indefinidamente.
 - Mudança de `seq` para trás (reordenação tardia) com frame mais velho que a posição de leitura → descarta.
+
+### PLC (perda de pacote) — v0.5.0
+
+Uma lacuna de sequência não pode virar clique: o degrau entre o último sample
+real e o silêncio do PLC é audível num microfone. O algoritmo real:
+
+1. **Retenção da cauda.** Os últimos `FADE = 64` samples de cada frame ficam
+   retidos até o próximo frame ser conhecido. Só então a cauda é liberada.
+2. **Frame contíguo** → a cauda toca cheia (nada muda em relação ao áudio
+   normal).
+3. **Lacuna detectada** → o frame real disponível é retirado do mapa para
+   `plc_next` (imune ao fast-forward) e `next_seq` avança **na detecção** (a
+   mesma lacuna nunca é contada nem emitida duas vezes). A cauda retida toca
+   com rampa 1→0 (fade-out, última amostra exatamente 0) e entra o silêncio do
+   PLC.
+4. **PLC limitado a `MAX_PLC_FRAMES = 3`** (30 ms). Acima disso o tempo é
+   comprimido, mas o áudio **continua** — nunca silêncio permanente.
+5. **Frame retomado** entra com rampa 0→1 (fade-in).
+
+O resultado é uma descontinuidade suave: nenhum degrau, só uma curva. Um
+clique por pacote perdido foi trocado por uma transição de 64 samples.
+
+`docs/latencia.md` documenta a medição; `pc/src-tauri/examples/lossy_client.rs`
+simula rede ruim (`--drop-pct`, `--jitter-ms`) para validar PLC, fade e
+`lossPct` de forma determinística.
 
 ## 5. Canal de controle (WebSocket)
 
@@ -92,19 +125,22 @@ Cliente → servidor:
 {"t":"hello","v":1,"token":"","sampleRate":48000,"channels":1,"codec":"pcm16","frameMs":10}
 {"t":"mute","value":true}
 {"t":"volume","value":1.2}
+{"t":"ping","id":7,"t0Ms":1000.5,"offsetMs":-250.25}
 {"t":"bye"}
 ```
 Servidor → cliente:
 ```json
-{"t":"welcome","sessionId":"c1f0","audioPort":41235,"targetBufferMs":30}
-{"t":"stats","lossPct":0.4,"bufferMs":32,"seqGaps":12,"reconnects":0}
+{"t":"welcome","sessionId":"c1f0","audioPort":41235,"targetBufferMs":30,"muted":false,"volume":1.0}
+{"t":"stats","lossPct":0.4,"bufferMs":32,"seqGaps":12,"reconnects":0,"latencyMs":8.4,"latencyP95Ms":14.2}
+{"t":"pong","id":7,"t0Ms":1000.5,"t1Ms":1008.9}
 {"t":"error","code":"bad_message","message":"mensagem inválida"}
 ```
 
 Regras:
-- `hello` é aceito sem validação de token (sem pareamento no MVP); servidor responde com `welcome` contendo `sessionId`. O áudio UDP daquele IP é aceito.
-- `volume` é clampado em `[0, 4]` no servidor; aplicado como multiplicador inteiro com clamp em `int16` (`Math.max(-32768, Math.min(32767, s * v))`), antes do sink. Mute é estado no cliente (para de enviar) **e** no servidor (descarta) — dupla garantia, porque se só o cliente parasse e o app travasse, ficaria áudio fantasma.
-- `stats` a 1 Hz, usado pelo app para mostrar perda/buffer (diagnóstico visível para o usuário, não telemetria).
+- `hello` é aceito sem validação de token (sem pareamento no MVP); servidor responde com `welcome` contendo `sessionId`, `muted` e `volume` (o celular ressincroniza o slider depois de uma reconexão). O áudio UDP **só** é aceito do IP com sessão de controle aberta (§10).
+- `volume` é clampado em `[0, 4]` no servidor e aplicado como ganho fixo no **ingest** (`RemoteGain`), junto com o mute. O ganho local do PC é aplicado no callback do sink; os dois se multiplicam.
+- `ping`/`pong` medem a latência de rede: o celular calcula `rtt` e o offset entre os relógios e devolve o offset no ping seguinte; o PC mede `capture → chegada` e publica mediana e p95 em `stats`. Ver `docs/latencia.md` (Método B).
+- `stats` a 1 Hz, usado pelo app para mostrar perda/buffer/latência (diagnóstico visível para o usuário, não telemetria).
 - Queda do WS: cliente reconecta com backoff 250 ms → 5 s; áudio UDP continua fluindo nesse intervalo (mute/volume ficam no último estado conhecido), o que mantém a experiência estável.
 
 **Δ:** o briefing põe mute/volume só no WebSocket. Mantemos, mas o header de áudio carrega `flags.MUTED` como redundância barata.
@@ -168,7 +204,7 @@ Micshare/
 │   │   └── types/
 │   └── src-tauri/            # Rust backend
 │       ├── src/
-│       │   ├── audio/mod.rs      # JitterBuffer, AudioSink (cpal), AudioCapture
+│       │   ├── audio/            # jitter.rs, sink.rs, latency.rs, mod.rs
 │       │   ├── control/mod.rs    # WebSocket control server
 │       │   ├── discovery/mod.rs  # UDP beacon sender/listener
 │       │   ├── protocol/mod.rs   # Binary protocol (AudioFrameHeader, CtrlMessage)
@@ -176,18 +212,24 @@ Micshare/
 │       │   ├── commands.rs       # Tauri commands
 │       │   ├── lib.rs            # Library entry point
 │       │   └── main.rs           # App entry point
+│       ├── examples/         # serve, devices, hot_swap, lossy_client
 │       ├── tauri.conf.json       # Tauri config
 │       └── Cargo.toml            # Rust dependencies
 ├── mobile/                   # cliente Android nativo (Kotlin + Jetpack Compose)
 │   └── app/src/main/java/com/micshare/
-│       ├── audio/                 # AudioRecord + AudioCaptureService (foreground)
-│       ├── network/               # AudioSender (UDP), ControlClient (WS), BeaconListener
+│       ├── audio/                 # AudioRecord + AudioCaptureService (foreground), TestTone
+│       ├── network/               # AudioSender (UDP), ControlClient (WS), BeaconListener, LatencyProbe
 │       ├── protocol/              # header e mensagens de controle (espelho do Rust)
 │       ├── ui/                    # Compose: MainScreen, DiscoverySection, SessionSection
 │       └── viewmodel/             # MainViewModel (descoberta → sessão → streaming)
-└── protocol/                 # header binário, encode/decode, validação, testes (TypeScript)
-    └── src/{audioFrame.ts,ctrl.ts}
+└── scripts/                  # set-version.mjs, generate-icons.py, onset-diff.py, install-vbcable.ps1
 ```
+
+O wire format tem **duas** implementações, Rust e Kotlin, e o contrato entre
+elas é fixado por testes (`pc/src-tauri/src/protocol/audio.rs` e
+`mobile/app/src/test/.../ProtocolContractTest.kt`). A terceira cópia em
+TypeScript foi removida na v0.5.0: ela não era importada por ninguém e só
+testava a si mesma.
 
 `pc/` é o servidor principal: `npm --prefix pc run tauri:dev` para desenvolvimento, `npm --prefix pc run tauri:build` gera instaladores MSI/NSIS.
 Não começamos por UI: a UI de um app de áudio é uma tela com 3 controles, o risco está no áudio.
@@ -216,15 +258,23 @@ mobile/
 │   └── di/             # Hilt/Koin modules
 ```
 
-A integração com o protocolo compartilhado (`@micshare/protocol`) será via **Kotlin Multiplatform** ou geração de código a partir do schema TypeScript (Fase 2). No MVP, o cliente Kotlin reimplementa encode/decode do header (16 B) localmente — são ~50 linhas.
+A integração com o protocolo compartilhado é feita por **reimplementação local**
+do header (16 B) em Kotlin — são ~50 linhas, e o contrato é fixado por
+`ProtocolContractTest.kt`, que valida os bytes contra o formato do Rust.
 
 ## 10. Segurança e limites de confiança
 
 Modelo de ameaça realista: rede doméstica compartilhada, eventualmente Wi-Fi de escritório ou café.
 
 No MVP:
-- Pareamento por código de 6 dígitos, válido por sessão, necessário para o `hello`. Sem ele, o servidor não aceita o UDP daquele par remoto.
-- Validação estrita de pacote (§3.2) e de tamanho de mensagem WS (1 KB), limite de `hello` a 5/min por IP.
+- **Allowlist de IP**: o UDP de áudio só é aceito de um IP que abriu sessão de
+  controle (`hello`). Sem sessão, o datagrama é descartado e contado em
+  `JitterMetrics::rejected` — nenhum host da LAN consegue injetar áudio no
+  microfone do usuário. O IP sai da lista quando a última sessão fecha.
+- **Não existe pareamento por código de 6 dígitos.** O campo `token` do
+  `hello` existe no protocolo, mas o servidor o aceita vazio: o controle real
+  de acesso é a allowlist de IP + a validação estrita de pacote (§3.2) e de
+  tamanho de mensagem WS (1 KB).
 - Volume e mute clampados; nada vindo da rede é usado como caminho de arquivo ou comando.
 - **Sem criptografia.** O áudio trafega em claro na LAN; quem estiver na mesma rede com sniffing consegue ouvir. Aceito para MVP, documentado no README como limitação conhecida.
 - Escape: se isso virar requisito, migrar o transporte de áudio para WebRTC (SRTP/DTLS) é a única saída sã — daí a decisão de manter o protocolo de áudio pequeno e substituível.
@@ -255,7 +305,8 @@ No MVP:
 
 ## 13. Testes
 
-- **Unitário (obrigatório):** `protocol` — encode/decode round-trip, rejeição de magic/versão/len inválidos; `jitterBuffer` com relógio fake cobrindo reordenação, gap, burst de perda, underrun e flush por profundidade.
+- **Unitário (obrigatório):** `protocol` (Rust) — encode/decode round-trip, rejeição de magic/versão/len inválidos; `jitterBuffer` com relógio fake cobrindo reordenação, gap, burst de perda, underrun, PLC com fade e flush por profundidade; `latency` — mediana e p95 da janela.
+- **Contrato cruzado:** `ProtocolContractTest.kt` valida os bytes do header e o JSON de controle contra o formato do Rust.
 - **Integração local:** servidor UDP + cliente fake em `127.0.0.1` enviando 500 frames, assert de frames recebidos / gaps contados / buffer estabilizado.
-- **Simulação de rede ruim:** variável `MICSHARE_DROP_PCT=5` e `MICSHARE_JITTER_MS=15` no cliente fake — sem depender de `tc/netem` (não existe no Windows).
+- **Simulação de rede ruim:** `pc/src-tauri/examples/lossy_client.rs` (`--drop-pct`, `--jitter-ms`, `--count`) — sem depender de `tc/netem` (não existe no Windows).
 - **Manual cross-device:** checklist em `docs/sprint-01-resultado.md`, com evidência (log de stats, gravação do áudio no PC).
