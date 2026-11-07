@@ -17,10 +17,14 @@ A latência real inclui o cabo virtual (VB-CABLE/PipeWire/BlackHole) e o buffer 
 
 ### Procedimento
 1. No PC: inicie gravação no Discord/OBS (duas trilhas: entrada do Micshare + microfone do PC apontado para o celular)
-2. No celular: toque um **bipe curto** (arquivo de teste 1 kHz, 100 ms, -6 dBFS) enquanto o app transmite
-3. Pare a gravação
-4. No editor de áudio (Audacity, Reaper, etc.): meça o delta entre o onset do bipe na **trilha do microfone do PC** (som acústico vindo do celular) e o onset na **trilha do Micshare** (sinal processado)
+2. No celular: toque **"Tocar bipe de teste"** no app (1 kHz, 100 ms, −6 dBFS) enquanto o app transmite
+3. Pare a gravação e exporte as duas trilhas em WAV
+4. Meça o delta: `python scripts/onset-diff.py ACUSTICA.wav MICSHARE.wav`
+   (imprime o delta de cada bipe, a média e o p95)
 5. Repita **5 vezes** por cenário
+
+> Sem o script, o mesmo delta pode ser medido no Audacity/Reaper: onset do
+> bipe na trilha do microfone do PC × onset na trilha do Micshare.
 
 ### Cenários
 | Cenário | Wi-Fi | Buffer alvo | Observação |

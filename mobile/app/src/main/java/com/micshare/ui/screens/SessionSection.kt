@@ -22,11 +22,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.micshare.audio.TestTone
 import com.micshare.ui.components.ButtonVariant
 import com.micshare.ui.components.GlassCard
 import com.micshare.ui.components.PillButton
@@ -39,6 +41,8 @@ import com.micshare.ui.theme.Red500
 import com.micshare.ui.theme.Yellow400
 import com.micshare.viewmodel.Phase
 import com.micshare.viewmodel.UiState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -236,6 +240,7 @@ private fun AudioControlsCard(
 @Composable
 private fun StatsCard(state: UiState) {
     val stats = state.stats
+    val scope = rememberCoroutineScope()
 
     GlassCard {
         Text(
@@ -291,7 +296,24 @@ private fun StatsCard(state: UiState) {
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(12.dp))
+
+        PillButton(
+            text = "Tocar bipe de teste",
+            onClick = { scope.launch(Dispatchers.IO) { TestTone.play() } },
+            variant = ButtonVariant.Secondary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+        )
+
+        Text(
+            text = "Mede a latência acústica (Método A): grave no PC e rode " +
+                "scripts/onset-diff.py com as duas trilhas.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
+        )
     }
 }
 
