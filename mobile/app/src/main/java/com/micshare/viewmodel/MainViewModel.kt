@@ -219,6 +219,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // Sem sessão, a descoberta volta a valer.
             startDiscovery()
+            // Um fone pode ter sido conectado durante a sessão.
+            refreshMicDevices()
 
             _state.update {
                 it.copy(
@@ -277,6 +279,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Volta a procurar PCs (o beacon do PC é retomado quando a sessão
         // termina).
         startDiscovery()
+        refreshMicDevices()
         _state.update {
             it.copy(phase = Phase.Idle, error = "conexão encerrada pelo PC")
         }
