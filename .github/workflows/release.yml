@@ -345,6 +345,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        if: ${{ needs.prepare.outputs.publish == 'true' }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Resumo dry-run
         if: ${{ needs.prepare.outputs.publish != 'true' }}
         shell: bash
@@ -436,6 +442,7 @@ jobs:
           EOF
 
           gh release create "$TAG" ./release-assets/* \
+            --repo "${{ github.repository }}" \
             --title "Micshare v$VERSION" \
             --notes-file notes.md
 
