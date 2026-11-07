@@ -3,10 +3,12 @@ package com.micshare.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.floatPreferencesKey
-import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.micshare.audio.AudioSourcePlanner
+import com.micshare.audio.MicDevices
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -16,14 +18,18 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 /**
  * Preferências persistidas do app.
  *
- * @property lastHost endereço do último PC conectado.
- * @property lastName nome do último PC conectado.
- * @property volume ganho enviado ao PC (`[0.0, 4.0]`).
+ * Só a entrada de áudio é persistida. O ganho e o mute **não**: quem manda é
+ * o PC (é o mixer), e o `welcome` devolve os valores em vigor — o celular
+ * ressincroniza o slider depois de reconectar.
+ *
+ * @property audioSource fonte de áudio (`MediaRecorder.AudioSource.*`).
+ * @property micDeviceId microfone escolhido (`NO_DEVICE` = padrão do sistema).
+ * @property agcEnabled ganho automático ligado pelo usuário.
  */
 data class AppSettings(
-    val lastHost: String = "",
-    val lastName: String = "",
-    val volume: Float = 1f,
+    val audioSource: Int = AudioSourcePlanner.SOURCE_MIC,
+    val micDeviceId: Int = MicDevices.NO_DEVICE,
+    val agcEnabled: Boolean = false,
 )
 
 /**
@@ -34,30 +40,24 @@ class SettingsStore(private val context: Context) {
     /** Preferências atuais, observáveis. */
     val settings: Flow<AppSettings> = context.dataStore.data.map { preferences ->
         AppSettings(
-            lastHost = preferences[KEY_LAST_HOST].orEmpty(),
-            lastName = preferences[KEY_LAST_NAME].orEmpty(),
-            volume = preferences[KEY_VOLUME] ?: 1f,
+            audioSource = preferences[KEY_AUDIO_SOURCE] ?: AudioSourcePlanner.SOURCE_MIC,
+            micDeviceId = preferences[KEY_MIC_DEVICE_ID] ?: MicDevices.NO_DEVICE,
+            agcEnabled = preferences[KEY_AGC_ENABLED] ?: false,
         )
     }
 
-    /** Guarda o último PC conectado. */
-    suspend fun rememberServer(host: String, name: String) {
+    /** Guarda a fonte de áudio, o microfone e o AGC escolhidos. */
+    suspend fun setAudioInput(source: Int, deviceId: Int, agc: Boolean) {
         context.dataStore.edit { preferences ->
-            preferences[KEY_LAST_HOST] = host
-            preferences[KEY_LAST_NAME] = name
-        }
-    }
-
-    /** Guarda o ganho de volume. */
-    suspend fun setVolume(volume: Float) {
-        context.dataStore.edit { preferences ->
-            preferences[KEY_VOLUME] = volume.coerceIn(0f, 4f)
+            preferences[KEY_AUDIO_SOURCE] = source
+            preferences[KEY_MIC_DEVICE_ID] = deviceId
+            preferences[KEY_AGC_ENABLED] = agc
         }
     }
 
     private companion object {
-        val KEY_LAST_HOST = stringPreferencesKey("last_host")
-        val KEY_LAST_NAME = stringPreferencesKey("last_name")
-        val KEY_VOLUME = floatPreferencesKey("volume")
+        val KEY_AUDIO_SOURCE = intPreferencesKey("audio_source")
+        val KEY_MIC_DEVICE_ID = intPreferencesKey("mic_device_id")
+        val KEY_AGC_ENABLED = booleanPreferencesKey("agc_enabled")
     }
 }

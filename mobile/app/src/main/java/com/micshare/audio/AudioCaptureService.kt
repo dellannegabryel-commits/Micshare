@@ -53,6 +53,15 @@ class AudioCaptureService : Service() {
     private var targetPort: Int = Protocol.AUDIO_PORT
     private var sequence: Long = 0
 
+    /** Fonte de áudio escolhida (`MediaRecorder.AudioSource`). */
+    private var audioSource: Int = AudioSourcePlanner.SOURCE_MIC
+
+    /** Microfone escolhido (`NO_DEVICE` = padrão do sistema). */
+    private var micDeviceId: Int = MicDevices.NO_DEVICE
+
+    /** AGC ligado pelo usuário (padrão: desligado — o app tem slider de volume). */
+    private var agcEnabled: Boolean = false
+
     /** Binder que expõe o estado e o controle de mute do serviço. */
     inner class LocalBinder : Binder() {
         /** Estado atual do streaming. */
@@ -81,6 +90,10 @@ class AudioCaptureService : Service() {
         }
 
         startForegroundNotification()
+
+        audioSource = intent?.getIntExtra(EXTRA_AUDIO_SOURCE, audioSource) ?: audioSource
+        micDeviceId = intent?.getIntExtra(EXTRA_MIC_DEVICE_ID, micDeviceId) ?: micDeviceId
+        agcEnabled = intent?.getBooleanExtra(EXTRA_AGC, agcEnabled) ?: agcEnabled
 
         val host = intent?.getStringExtra(EXTRA_HOST) ?: targetHost
         val port = intent?.getIntExtra(EXTRA_AUDIO_PORT, targetPort) ?: targetPort
@@ -114,36 +127,44 @@ class AudioCaptureService : Service() {
             val sender = AudioSender(host, port)
             _status.update { it.copy(active = true, error = null, framesSent = 0, bytesSent = 0, framesPerSecond = 0) }
 
-            // FPS rolante: conta frames no último segundo.
-            var framesThisSecond = 0
-            var secondStart = SystemClock.elapsedRealtime()
+            // Contadores acumulados localmente; o status só é publicado a 2 Hz
+            // (cada emissão do StateFlow vira uma recomposição do Compose).
+            val throttle = StatusThrottle()
+            var framesSincePublish = 0
+            var bytesSincePublish = 0L
+            var windowStart = SystemClock.elapsedRealtime()
 
             try {
-                AudioCapture().frames().collect { pcm ->
+                AudioCapture(
+                    context = applicationContext,
+                    source = audioSource,
+                    deviceId = micDeviceId.takeIf { it != MicDevices.NO_DEVICE },
+                    includeAgc = agcEnabled,
+                ).frames().collect { frame ->
                     val flags = if (_status.value.muted) AudioFrame.FLAG_MUTED else 0
                     val datagram = AudioFrame.encode(
                         seq = (sequence++ and 0xFFFFFFFFL).toInt(),
-                        captureTsMs = SystemClock.elapsedRealtime(),
+                        captureTsMs = frame.captureTsMs,
                         flags = flags,
-                        pcm = pcm,
+                        pcm = frame.pcm,
                     )
                     sender.send(datagram)
-                    framesThisSecond++
-                    // contadores acumulados localmente; publicação só a 1 Hz
+                    framesSincePublish++
+                    bytesSincePublish += datagram.size
                     val now = SystemClock.elapsedRealtime()
-                    val elapsed = now - secondStart
-                    // Status é publicado no máximo 1×/s (throttle).
-                    if (elapsed >= 1000) {
-                        val fps = (framesThisSecond * 1000 / elapsed.toInt()).coerceAtLeast(0)
+                    if (throttle.shouldPublish(now)) {
+                        val elapsed = (now - windowStart).coerceAtLeast(1)
+                        val fps = (framesSincePublish * 1000L / elapsed).toInt()
                         _status.update {
                             it.copy(
-                                framesSent = it.framesSent + framesThisSecond,
-                                bytesSent = it.bytesSent + (datagram.size.toLong() * framesThisSecond),
+                                framesSent = it.framesSent + framesSincePublish,
+                                bytesSent = it.bytesSent + bytesSincePublish,
                                 framesPerSecond = fps,
                             )
                         }
-                        framesThisSecond = 0
-                        secondStart = now
+                        framesSincePublish = 0
+                        bytesSincePublish = 0
+                        windowStart = now
                     }
                 }
             } catch (cancellation: CancellationException) {
@@ -163,14 +184,14 @@ class AudioCaptureService : Service() {
         val pm = getSystemService(PowerManager::class.java) ?: return
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Micshare::Streaming").apply {
             setReferenceCounted(false)
-            acquire(LOCK_TIMEOUT_MS)
+            acquire(WakeLockPolicy.LOCK_TIMEOUT_MS)
         }
         // Renovação periódica: o lock expira em 10 min; renovamos a cada 4 min
-        // (RENWAL_INTERVAL_MS < LOCK_TIMEOUT_MS, invariante testada em WakeLockPolicy).
+        // (RENEWAL_INTERVAL_MS < LOCK_TIMEOUT_MS, invariante testada em WakeLockPolicy).
         serviceScope.launch {
             while (isActive) {
-                delay(RENEWAL_INTERVAL_MS)
-                runCatching { wakeLock?.acquire(LOCK_TIMEOUT_MS) }
+                delay(WakeLockPolicy.RENEWAL_INTERVAL_MS)
+                runCatching { wakeLock?.acquire(WakeLockPolicy.LOCK_TIMEOUT_MS) }
             }
         }
     }
@@ -234,11 +255,6 @@ class AudioCaptureService : Service() {
     }
 
     companion object {
-        /** Timeout do WakeLock (min). */
-        const val LOCK_TIMEOUT_MS: Long = 10 * 60 * 1000L
-        /** Intervalo de renovação do WakeLock (menor que o timeout). */
-        const val RENEWAL_INTERVAL_MS: Long = 4 * 60 * 1000L
-
         /** Canal de notificações do streaming. */
         const val CHANNEL_ID = "micshare_streaming"
 
@@ -253,5 +269,14 @@ class AudioCaptureService : Service() {
 
         /** Extra com a porta UDP de áudio. */
         const val EXTRA_AUDIO_PORT = "com.micshare.audio.PORT"
+
+        /** Extra com a fonte de áudio (`MediaRecorder.AudioSource`). */
+        const val EXTRA_AUDIO_SOURCE = "com.micshare.audio.SOURCE"
+
+        /** Extra com o id do microfone escolhido. */
+        const val EXTRA_MIC_DEVICE_ID = "com.micshare.audio.MIC_DEVICE_ID"
+
+        /** Extra que liga o AGC (padrão: desligado). */
+        const val EXTRA_AGC = "com.micshare.audio.AGC"
     }
 }

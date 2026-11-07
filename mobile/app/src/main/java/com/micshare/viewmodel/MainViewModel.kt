@@ -13,6 +13,9 @@ import androidx.lifecycle.viewModelScope
 import com.micshare.AppContainer
 import com.micshare.MicshareApplication
 import com.micshare.audio.AudioCaptureService
+import com.micshare.audio.AudioSourcePlanner
+import com.micshare.audio.MicDevice
+import com.micshare.audio.MicDevices
 import com.micshare.audio.StreamingStatus
 import com.micshare.network.ControlSession
 import com.micshare.network.DiscoveredServer
@@ -59,6 +62,10 @@ enum class Phase {
  * @property volume ganho enviado ao PC (`[0.0, 4.0]`).
  * @property stats métricas recebidas do PC (`stats`, 1 Hz).
  * @property audio estado do streaming de áudio.
+ * @property audioSource fonte de áudio escolhida (`MediaRecorder.AudioSource.*`).
+ * @property micDeviceId microfone escolhido (`NO_DEVICE` = padrão do sistema).
+ * @property micDevices microfones disponíveis no aparelho.
+ * @property agcEnabled ganho automático ligado.
  * @property error última mensagem de erro.
  */
 data class UiState(
@@ -72,6 +79,10 @@ data class UiState(
     val volume: Float = 1f,
     val stats: ControlMessage.Stats? = null,
     val audio: StreamingStatus = StreamingStatus(),
+    val audioSource: Int = AudioSourcePlanner.SOURCE_MIC,
+    val micDeviceId: Int = MicDevices.NO_DEVICE,
+    val micDevices: List<MicDevice> = emptyList(),
+    val agcEnabled: Boolean = false,
     val error: String? = null,
 )
 
@@ -102,9 +113,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             container.settings.settings.collect { settings ->
-                _state.update { it.copy(volume = settings.volume) }
+                _state.update {
+                    it.copy(
+                        audioSource = settings.audioSource,
+                        micDeviceId = settings.micDeviceId,
+                        agcEnabled = settings.agcEnabled,
+                    )
+                }
             }
         }
+        refreshMicDevices()
         startDiscovery()
     }
 
@@ -182,7 +200,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             controlSession = session
-            container.settings.rememberServer(server.host, server.name)
             controlJob = viewModelScope.launch { consumeControlMessages(session) }
         }
     }
@@ -227,6 +244,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             phase = Phase.Connected,
                             sessionId = message.sessionId,
                             codec = message.codec,
+                            // O PC é o mixer: mute e ganho em vigor lá valem
+                            // aqui — o slider ressincroniza após reconectar.
+                            muted = message.muted,
+                            volume = message.volume,
                             error = null,
                         )
                     }
@@ -296,7 +317,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(volume = clamped) }
         viewModelScope.launch {
             runCatching { controlSession?.send(ControlMessage.Volume(clamped)) }
-            container.settings.setVolume(clamped)
+        }
+    }
+
+    // --------------------------------------------------------- entrada de áudio
+
+    /** Escolhe a fonte de áudio (`MediaRecorder.AudioSource.*`). */
+    fun setAudioSource(source: Int) {
+        _state.update { it.copy(audioSource = source) }
+        persistAudioInput()
+    }
+
+    /** Escolhe o microfone (`NO_DEVICE` = padrão do sistema). */
+    fun setMicDevice(deviceId: Int) {
+        _state.update { it.copy(micDeviceId = deviceId) }
+        persistAudioInput()
+    }
+
+    /** Liga/desliga o ganho automático (AGC). */
+    fun setAgcEnabled(enabled: Boolean) {
+        _state.update { it.copy(agcEnabled = enabled) }
+        persistAudioInput()
+    }
+
+    /** Relê a lista de microfones (um fone pode ter sido conectado). */
+    fun refreshMicDevices() {
+        val devices = MicDevices.options(getApplication())
+        _state.update { it.copy(micDevices = devices) }
+    }
+
+    /** Grava a entrada de áudio escolhida. */
+    private fun persistAudioInput() {
+        val current = _state.value
+        viewModelScope.launch {
+            container.settings.setAudioInput(
+                source = current.audioSource,
+                deviceId = current.micDeviceId,
+                agc = current.agcEnabled,
+            )
         }
     }
 
@@ -315,6 +373,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val intent = Intent(context, AudioCaptureService::class.java).apply {
             putExtra(AudioCaptureService.EXTRA_HOST, server.host)
             putExtra(AudioCaptureService.EXTRA_AUDIO_PORT, audioPort)
+            putExtra(AudioCaptureService.EXTRA_AUDIO_SOURCE, _state.value.audioSource)
+            putExtra(AudioCaptureService.EXTRA_MIC_DEVICE_ID, _state.value.micDeviceId)
+            putExtra(AudioCaptureService.EXTRA_AGC, _state.value.agcEnabled)
         }
 
         ContextCompat.startForegroundService(context, intent)

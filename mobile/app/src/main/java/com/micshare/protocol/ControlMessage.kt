@@ -35,6 +35,10 @@ sealed interface ControlMessage {
         val audioPort: Int,
         val targetBufferMs: Int,
         val codec: String,
+        /** Mute remoto em vigor no PC (o celular ressincroniza o botão). */
+        val muted: Boolean = false,
+        /** Ganho remoto em vigor no PC (`[0.0, 4.0]`). */
+        val volume: Float = 1f,
     ) : ControlMessage
 
     /** Liga/desliga o mute no servidor. */

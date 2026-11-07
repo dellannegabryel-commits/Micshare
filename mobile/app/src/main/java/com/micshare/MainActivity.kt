@@ -52,11 +52,16 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { /* A notificação do foreground service funciona mesmo sem o consentimento. */ }
 
+    private val bluetoothPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* Sem Bluetooth o app ainda usa o microfone embutido. */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         requestNotificationPermission()
+        requestBluetoothPermission()
 
         setContent {
             MicshareTheme {
@@ -69,6 +74,9 @@ class MainActivity : ComponentActivity() {
                     onToggleMute = viewModel::toggleMute,
                     onVolumeChange = viewModel::setVolume,
                     onRefresh = viewModel::startDiscovery,
+                    onAudioSourceChange = viewModel::setAudioSource,
+                    onMicChange = viewModel::setMicDevice,
+                    onAgcChange = viewModel::setAgcEnabled,
                 )
             }
         }
@@ -100,6 +108,25 @@ class MainActivity : ComponentActivity() {
 
         if (!granted) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    /**
+     * Pede a permissão de Bluetooth (API 31+).
+     *
+     * Sem ela os microfones Bluetooth (SCO) não aparecem na lista de
+     * entradas. O microfone embutido funciona sem a permissão.
+     */
+    private fun requestBluetoothPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.BLUETOOTH_CONNECT,
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+            bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
         }
     }
 }

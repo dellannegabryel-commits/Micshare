@@ -14,8 +14,8 @@ android {
         applicationId = "com.micshare"
         minSdk = 23
         targetSdk = 35
-        versionCode = 404
-        versionName = "0.4.4"
+        versionCode = 500
+        versionName = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

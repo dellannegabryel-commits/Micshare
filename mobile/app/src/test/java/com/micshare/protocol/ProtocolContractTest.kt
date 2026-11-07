@@ -1,5 +1,6 @@
 package com.micshare.protocol
 
+import com.micshare.audio.CaptureClock
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -98,6 +99,22 @@ class ProtocolContractTest {
         assertEquals(41235, welcome.audioPort)
         assertEquals(30, welcome.targetBufferMs)
         assertEquals("pcm16", welcome.codec)
+        // PC antigo (sem os campos novos) não quebra o app.
+        assertEquals(false, welcome.muted)
+        assertEquals(1f, welcome.volume, 0.001f)
+    }
+
+    @Test
+    fun welcome_carrega_o_mute_e_o_volume_do_pc() {
+        val json =
+            """{"t":"welcome","sessionId":"c0001","audioPort":41235,"targetBufferMs":30,"codec":"pcm16","muted":true,"volume":2.5}"""
+
+        val welcome = ProtocolJson.decodeFromString<ControlMessage>(json)
+
+        assertTrue(welcome is ControlMessage.Welcome)
+        welcome as ControlMessage.Welcome
+        assertEquals(true, welcome.muted)
+        assertEquals(2.5f, welcome.volume, 0.001f)
     }
 
     @Test
@@ -234,5 +251,43 @@ class ProtocolContractTest {
             "frame estourou o MTU: ${datagram.size}",
             datagram.size <= 1472,
         )
+    }
+
+    @Test
+    fun capture_ts_e_monotonico() {
+        var now = 1_000L
+        val clock = CaptureClock { now }
+
+        val timestamps = (0 until 3).map {
+            now += 10
+            val captureTs = clock.captureTs()
+            AudioFrame.decode(
+                AudioFrame.encode(
+                    seq = it,
+                    captureTsMs = captureTs,
+                    pcm = ShortArray(Protocol.FRAME_SAMPLES),
+                ),
+            ).captureTsMs
+        }
+
+        assertEquals(listOf(1_010L, 1_020L, 1_030L), timestamps)
+        assertTrue(
+            "capture_ts não pode andar para trás",
+            timestamps.zipWithNext().all { (anterior, proximo) -> proximo > anterior },
+        )
+    }
+
+    @Test
+    fun seq_usa_u32_e_preserva_o_wrap() {
+        // 0xFFFFFFFE, 0xFFFFFFFF e 0x00000000 em u32 (o Int do Kotlin é com sinal).
+        val seqs = listOf(0xFFFFFFFE.toInt(), 0xFFFFFFFF.toInt(), 0x00000000)
+
+        val decoded = seqs.map { seq ->
+            AudioFrame.decode(
+                AudioFrame.encode(seq = seq, captureTsMs = 0, pcm = ShortArray(Protocol.FRAME_SAMPLES)),
+            ).seq.toLong() and 0xFFFFFFFFL
+        }
+
+        assertEquals(listOf(4_294_967_294L, 4_294_967_295L, 0L), decoded)
     }
 }
