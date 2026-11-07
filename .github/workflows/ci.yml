@@ -38,6 +38,20 @@ jobs:
             pc/src-tauri/target
           key: cargo-${{ runner.os }}-${{ hashFiles('pc/src-tauri/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
+      # Dependências de sistema do Tauri no Linux (glib/gtk/webkit): sem elas
+      # o build script do `glib-sys` falha e o job morre antes do clippy.
+      # Lista oficial do Tauri 2 (Debian/Ubuntu).
+      - name: Dependências de sistema (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
       - working-directory: pc/src-tauri
         run: cargo fmt --check
       - working-directory: pc/src-tauri
