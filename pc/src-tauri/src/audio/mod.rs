@@ -7,9 +7,12 @@
 //! - **cpal**: reproduz no dispositivo de saída do PC.
 
 pub mod jitter;
+pub mod latency;
 pub mod resample;
 pub mod sink;
 
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -22,6 +25,7 @@ use tokio::task::JoinHandle;
 use crate::protocol::{AudioCodec, AudioFrameHeader, BIND_ADDR, HEADER_LEN};
 
 pub use jitter::{JitterBuffer, JitterMetrics};
+pub use latency::{ClockOffset, LatencyTracker};
 pub use sink::OutputDevice;
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
@@ -49,6 +53,106 @@ pub const VOLUME_UNITY: u32 = 1000;
 
 /// Volume máximo em fixed-point: 4000 = 400% (limite do slider da UI).
 pub const VOLUME_MAX: u32 = 4000;
+
+/// Ganho aplicado no ingest (mute/volume do celular, via WS).
+///
+/// Distinto do [`AudioControls`] (mute/volume **local do PC**), que é aplicado
+/// no callback RT do sink. Aplicar o ganho remoto aqui — no caminho que já
+/// trata a flag `FLAG_MUTED` — evita tocar no caminho de tempo real; os dois
+/// ganhos se multiplicam.
+#[derive(Debug)]
+pub struct RemoteGain {
+    mute: AtomicBool,
+    volume: AtomicU32,
+}
+
+impl Default for RemoteGain {
+    /// Mesmos valores de [`RemoteGain::new`] — o `derive(Default)` colocaria
+    /// `volume = 0` (silêncio absoluto).
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RemoteGain {
+    /// Cria o ganho com mute desligado e volume em 100%.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            mute: AtomicBool::new(false),
+            volume: AtomicU32::new(VOLUME_UNITY),
+        }
+    }
+
+    /// Liga ou desliga o mute do celular.
+    pub fn set_mute(&self, muted: bool) {
+        self.mute.store(muted, Ordering::Relaxed);
+    }
+
+    /// `true` se o mute do celular está ligado.
+    #[must_use]
+    pub fn muted(&self) -> bool {
+        self.mute.load(Ordering::Relaxed)
+    }
+
+    /// Define o volume (fixed-point `0..=VOLUME_MAX`).
+    pub fn set_volume(&self, volume: u32) {
+        self.volume.store(volume.min(VOLUME_MAX), Ordering::Relaxed);
+    }
+
+    /// Volume atual (fixed-point: `1000` = 100%).
+    #[must_use]
+    pub fn volume(&self) -> u32 {
+        self.volume.load(Ordering::Relaxed)
+    }
+}
+
+/// Origens autorizadas a enviar áudio.
+///
+/// Sem uma sessão de controle ativa, **qualquer** host da LAN pode injetar
+/// áudio no microfone do usuário. A allowlist é alimentada pelo servidor de
+/// controle (o IP do celular que abriu a sessão) e consultada no ingest: um
+/// datagrama de outra origem é descartado e contado em
+/// `JitterMetrics::rejected`.
+///
+/// O IP sai da lista quando a **última** sessão daquele IP fecha — duas
+/// sessões do mesmo celular (reconexão em paralelo) não se cancelam.
+#[derive(Debug, Clone, Default)]
+pub struct AllowedSources {
+    /// IP → número de sessões de controle ativas.
+    ips: Arc<Mutex<HashMap<IpAddr, u32>>>,
+}
+
+impl AllowedSources {
+    /// Libera um IP para enviar áudio (uma sessão a mais).
+    pub fn allow(&self, ip: IpAddr) {
+        if let Ok(mut ips) = self.ips.lock() {
+            *ips.entry(ip).or_insert(0) += 1;
+        }
+    }
+
+    /// Revoga o acesso de um IP (uma sessão a menos; sai quando não resta nenhuma).
+    pub fn revoke(&self, ip: IpAddr) {
+        if let Ok(mut ips) = self.ips.lock() {
+            match ips.get_mut(&ip) {
+                Some(count) if *count > 1 => *count -= 1,
+                Some(_) => {
+                    ips.remove(&ip);
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// `true` se o IP pode enviar áudio.
+    #[must_use]
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        self.ips
+            .lock()
+            .map(|ips| ips.contains_key(&ip))
+            .unwrap_or(false)
+    }
+}
 
 /// Controles de reprodução do PC (mute/volume), aplicados no callback RT do sink.
 ///
@@ -123,6 +227,8 @@ pub struct AudioPipeline {
     /// Sink ativo; trocado em quente por [`AudioPipeline::set_output_device`].
     sink: Mutex<SinkHandle>,
     controls: AudioControls,
+    /// Ganho commanded pelo celular (mute/volume), aplicado no ingest.
+    remote_gain: Arc<RemoteGain>,
     /// Último dispositivo solicitado (substring; `None` = padrão do sistema).
     /// Guardado para rollback quando a troca falha.
     requested_device: Mutex<Option<String>>,
@@ -181,7 +287,13 @@ impl AudioPipeline {
     /// `controls` é compartilhado com o callback do sink (mute/volume aplicados
     /// em tempo real) e pode ser criado pelo dono para sobreviver a restarts
     /// do pipeline.
-    pub async fn start(config: AudioConfig, controls: AudioControls) -> Result<Self, DynError> {
+    pub async fn start(
+        config: AudioConfig,
+        controls: AudioControls,
+        remote_gain: Arc<RemoteGain>,
+        allowed: Arc<AllowedSources>,
+        latency: Option<Arc<LatencyTracker>>,
+    ) -> Result<Self, DynError> {
         let socket = UdpSocket::bind((BIND_ADDR, config.port)).await?;
 
         let buffer = Arc::new(Mutex::new(JitterBuffer::new(
@@ -202,7 +314,13 @@ impl AudioPipeline {
         // `Sync`, e a thread apenas o mantém vivo até o pipeline parar.
         let sink_handle = SinkHandle::spawn(stream);
 
-        let receiver = tokio::spawn(receive_frames(socket, Arc::clone(&buffer)));
+        let receiver = tokio::spawn(receive_frames(
+            socket,
+            Arc::clone(&buffer),
+            Some(Arc::clone(&remote_gain)),
+            Arc::clone(&allowed),
+            latency,
+        ));
 
         Ok(Self {
             buffer,
@@ -210,8 +328,15 @@ impl AudioPipeline {
             receiver: AsyncMutex::new(Some(receiver)),
             sink: Mutex::new(sink_handle),
             controls,
+            remote_gain,
             requested_device: Mutex::new(config.device_substring.clone()),
         })
+    }
+
+    /// Ganho commanded pelo celular (mute/volume).
+    #[must_use]
+    pub fn remote_gain(&self) -> &RemoteGain {
+        &self.remote_gain
     }
 
     /// Controles de mute/volume da reprodução (compartilhados com o sink).
@@ -387,14 +512,33 @@ impl Drop for AudioPipeline {
 /// Recebe frames UDP, valida o header e alimenta o jitter buffer.
 ///
 /// Fica em loop até o socket ser fechado ou a task ser abortada.
-pub async fn receive_frames(socket: UdpSocket, buffer: Arc<Mutex<JitterBuffer>>) {
+///
+/// `allowed` restringe o ingest aos IPs com sessão de controle: um datagrama
+/// de outro host da LAN é descartado e contado em `JitterMetrics::rejected`.
+///
+/// `latency` mede a latência de rede (capture → chegada): sem offset
+/// publicado pelo celular a medição é ignorada.
+pub async fn receive_frames(
+    socket: UdpSocket,
+    buffer: Arc<Mutex<JitterBuffer>>,
+    remote_gain: Option<Arc<RemoteGain>>,
+    allowed: Arc<AllowedSources>,
+    latency: Option<Arc<LatencyTracker>>,
+) {
     let mut datagram =
         vec![0_u8; HEADER_LEN + usize::from(crate::protocol::audio::MAX_PAYLOAD_LEN)];
 
     loop {
-        let Ok((len, _peer)) = socket.recv_from(&mut datagram).await else {
+        let Ok((len, peer)) = socket.recv_from(&mut datagram).await else {
             break;
         };
+
+        if !allowed.contains(peer.ip()) {
+            if let Ok(mut guard) = buffer.lock() {
+                guard.note_rejected();
+            }
+            continue;
+        }
 
         let Ok((header, payload)) = AudioFrameHeader::decode(&datagram[..len]) else {
             continue;
@@ -404,10 +548,38 @@ pub async fn receive_frames(socket: UdpSocket, buffer: Arc<Mutex<JitterBuffer>>)
             continue;
         }
 
+        // Latência de rede: do capture (no relógio do celular) até a chegada
+        // aqui (no relógio do PC).
+        if let Some(latency) = &latency {
+            latency.observe(header.capture_ts);
+        }
+
         // Frame mutado: mantemos a sequência (inserindo silêncio) para evitar
         // buracos de seq e inflação artificial da perda.
         let samples: Vec<i16> = if header.is_muted() {
             vec![0; payload.len() / 2]
+        } else if let Some(gain) = &remote_gain {
+            if gain.muted() {
+                vec![0; payload.len() / 2]
+            } else {
+                let vol = gain.volume();
+                if vol == VOLUME_UNITY {
+                    payload
+                        .chunks_exact(2)
+                        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+                        .collect()
+                } else {
+                    payload
+                        .chunks_exact(2)
+                        .map(|pair| {
+                            let s = i16::from_le_bytes([pair[0], pair[1]]);
+                            let v = (s as i32 * vol as i32 / VOLUME_UNITY as i32)
+                                .clamp(i16::MIN as i32, i16::MAX as i32);
+                            v as i16
+                        })
+                        .collect()
+                }
+            }
         } else {
             payload
                 .chunks_exact(2)

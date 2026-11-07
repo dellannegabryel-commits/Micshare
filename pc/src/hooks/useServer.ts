@@ -23,6 +23,9 @@ const EMPTY_STATS: ServerStats = {
     underruns: 0,
     fastForwards: 0,
     flushes: 0,
+    resyncs: 0,
+    receivedFps: 0,
+    rejected: 0,
   },
   fps: 0,
   lossPct: 0,
@@ -30,6 +33,8 @@ const EMPTY_STATS: ServerStats = {
   muted: false,
   volume: 1000,
   reconnects: 0,
+  latencyMs: 0,
+  latencyP95Ms: 0,
 };
 
 const DEFAULT_CONFIG: ServerConfig = {
@@ -37,7 +42,6 @@ const DEFAULT_CONFIG: ServerConfig = {
   ctrlPort: 41236,
   deviceSubstring: null,
   name: null,
-  defaultCodec: 'opus',
 };
 
 /**

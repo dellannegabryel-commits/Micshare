@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,14 +16,17 @@ import com.micshare.audio.AudioCaptureService
 import com.micshare.audio.StreamingStatus
 import com.micshare.network.ControlSession
 import com.micshare.network.DiscoveredServer
+import com.micshare.network.LatencyProbe
 import com.micshare.protocol.ControlMessage
 import com.micshare.protocol.Protocol
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -84,9 +88,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var discoveryJob: Job? = null
     private var controlJob: Job? = null
     private var audioJob: Job? = null
+    private var pingJob: Job? = null
     private var controlSession: ControlSession? = null
     private var audioBinder: AudioCaptureService.LocalBinder? = null
     private var serviceConnection: ServiceConnection? = null
+
+    /**
+     * Sonda de latência (o PC é quem mede: precisa do offset entre os
+     * relógios, publicado aqui no `ping` seguinte).
+     */
+    private val latencyProbe = LatencyProbe { phoneClockMs() }
 
     init {
         viewModelScope.launch {
@@ -184,6 +195,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             controlSession = null
             controlJob?.cancel()
             controlJob = null
+            pingJob?.cancel()
+            pingJob = null
 
             stopAudioService()
 
@@ -222,10 +235,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // a lista de servidores sem parar, gastando bateria e
                     // PROCESSANDO frame a frame o que não interessa mais.
                     stopDiscovery()
+                    startPingLoop()
                     startAudioService(message.audioPort)
                 }
 
                 is ControlMessage.Stats -> _state.update { it.copy(stats = message) }
+
+                is ControlMessage.Pong -> latencyProbe.onPong(message.t0Ms, message.t1Ms)
 
                 is ControlMessage.Error -> _state.update {
                     it.copy(error = "${message.code}: ${message.message}")
@@ -242,6 +258,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startDiscovery()
         _state.update {
             it.copy(phase = Phase.Idle, error = "conexão encerrada pelo PC")
+        }
+    }
+
+    /**
+     * Inicia o loop de `ping` (medição de latência).
+     *
+     * O offset medido no `pong` volta no `ping` seguinte — o PC usa para
+     * traduzir o `capture_ts` (relógio do celular) para o relógio dele.
+     */
+    private fun startPingLoop() {
+        if (pingJob?.isActive == true) return
+
+        pingJob = viewModelScope.launch {
+            var id = 0
+            while (isActive) {
+                id += 1
+                runCatching { controlSession?.send(latencyProbe.ping(id)) }
+                delay(PING_INTERVAL_MS)
+            }
         }
     }
 
@@ -334,6 +369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         stopDiscovery()
         controlJob?.cancel()
+        pingJob?.cancel()
         runCatching { container.controlClient.close() }
         super.onCleared()
     }
@@ -341,5 +377,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         /** Tempo de vida de um servidor sem beacon (ms). */
         const val SERVER_TTL_MS = 5_000L
+
+        /** Intervalo entre as sondagens de latência (ms). */
+        const val PING_INTERVAL_MS = 2_000L
     }
 }
+
+/**
+ * Relógio do celular em ms, no domínio do `capture_ts` (u32).
+ *
+ * O `capture_ts` do frame é `elapsedRealtime()` truncado em 32 bits — o ping
+ * precisa estar no mesmo domínio, senão o offset do PC fica errado.
+ */
+private fun phoneClockMs(): Double =
+    (SystemClock.elapsedRealtime() and 0xFFFFFFFFL).toDouble()

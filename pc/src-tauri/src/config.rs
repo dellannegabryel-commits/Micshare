@@ -2,18 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Codec do payload de áudio.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Codec {
-    /// PCM 16-bit little-endian (MVP).
-    Pcm,
-    /// Opus (Fase 2) — default da UI.
-    #[default]
-    Opus,
-}
-
 /// Configuração serializável, espelhando `ServerConfig` no frontend.
+///
+/// O codec do payload de áudio é fixo em PCM s16le (16 bytes de header +
+/// payload little-endian). A negociação de Opus foi removida: o receptor
+/// (`audio::receive_frames`) aceita apenas PCM e descarta o resto. O byte
+/// `codec` do header (0 = PCM, 1 = Opus) permanece reservado no wire format
+/// para uma futura fase — ver `protocol::audio::AudioCodec`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
@@ -25,8 +20,6 @@ pub struct ServerConfig {
     pub device_substring: Option<String>,
     /// Nome anunciado no beacon; `None` = usa o hostname do PC.
     pub name: Option<String>,
-    /// Codec preferido no payload de áudio.
-    pub default_codec: Codec,
 }
 
 impl Default for ServerConfig {
@@ -36,7 +29,6 @@ impl Default for ServerConfig {
             ctrl_port: crate::protocol::CONTROL_PORT,
             device_substring: None,
             name: None,
-            default_codec: Codec::default(),
         }
     }
 }

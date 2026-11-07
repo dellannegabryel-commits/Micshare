@@ -5,7 +5,7 @@
 //! e recebe `stats` a 1 Hz.
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::protocol::{CODEC_OPUS, CODEC_PCM16, CtrlMessage};
+use crate::protocol::{CODEC_PCM16, CtrlMessage};
 
 /// Tamanho máximo de uma mensagem de controle (docs §10: 1 KB).
 pub const MAX_MESSAGE_LEN: usize = 1024;
@@ -63,6 +63,10 @@ pub struct ControlStats {
     pub seq_gaps: u32,
     /// Reconexões.
     pub reconnects: u32,
+    /// Latência de rede mediana (ms).
+    pub latency_ms: f64,
+    /// Latência de rede p95 (ms).
+    pub latency_p95_ms: f64,
 }
 
 /// Estado compartilhado do canal de controle.
@@ -90,6 +94,8 @@ impl Default for ControlState {
 #[derive(Debug, Clone)]
 struct SessionEntry {
     info: SessionInfo,
+    /// Endereço do celular (usado na allowlist de áudio).
+    addr: IpAddr,
     tx: mpsc::UnboundedSender<CtrlMessage>,
 }
 
@@ -117,6 +123,12 @@ pub struct ControlServer {
     seen_ips: RwLock<HashSet<String>>,
     /// Notificado sobre criação/encerramento de sessões.
     session_listener: RwLock<Option<SessionListener>>,
+    /// Ganho commanded pelo celular (mute/volume) — aplicado no ingest.
+    remote_gain: Arc<crate::audio::RemoteGain>,
+    /// IPs autorizados a enviar áudio (preenchido no `hello`).
+    allowed: Arc<crate::audio::AllowedSources>,
+    /// Offset entre o relógio do celular e o do PC (publicado no `ping`).
+    offset: Arc<crate::audio::ClockOffset>,
 }
 
 impl ControlServer {
@@ -132,7 +144,29 @@ impl ControlServer {
             reconnects: AtomicU64::new(0),
             seen_ips: RwLock::new(HashSet::new()),
             session_listener: RwLock::new(None),
+            remote_gain: Arc::new(crate::audio::RemoteGain::new()),
+            allowed: Arc::new(crate::audio::AllowedSources::default()),
+            offset: Arc::new(crate::audio::ClockOffset::default()),
         })
+    }
+
+    /// Ganho remoto (mute/volume do celular), compartilhado com o pipeline.
+    #[must_use]
+    pub fn remote_gain(&self) -> Arc<crate::audio::RemoteGain> {
+        Arc::clone(&self.remote_gain)
+    }
+
+    /// Allowlist de IPs autorizados a enviar áudio, compartilhada com o pipeline.
+    #[must_use]
+    pub fn allowed_sources(&self) -> Arc<crate::audio::AllowedSources> {
+        Arc::clone(&self.allowed)
+    }
+
+    /// Offset entre o relógio do celular e o do PC, compartilhado com o
+    /// rastreador de latência do pipeline de áudio.
+    #[must_use]
+    pub fn clock_offset(&self) -> Arc<crate::audio::ClockOffset> {
+        Arc::clone(&self.offset)
     }
 
     /// Registra o notificado de criação/encerramento de sessões.
@@ -194,6 +228,7 @@ impl ControlServer {
         let entries: Vec<SessionEntry> = self.sessions.read().await.values().cloned().collect();
         for entry in entries {
             let _ = entry.tx.send(CtrlMessage::Bye);
+            self.allowed.revoke(entry.addr);
         }
         self.sessions.write().await.clear();
     }
@@ -229,6 +264,8 @@ impl ControlServer {
             buffer_ms: state.stats.buffer_ms,
             seq_gaps: state.stats.seq_gaps,
             reconnects: self.reconnects(),
+            latency_ms: state.stats.latency_ms,
+            latency_p95_ms: state.stats.latency_p95_ms,
         };
         drop(state);
         self.broadcast(&message).await;
@@ -265,6 +302,7 @@ impl ControlServer {
         });
 
         let ip = peer.ip().to_string();
+        let peer_ip = peer.ip();
         let mut session_id: Option<String> = None;
         // Erro de leitura do socket. Antes, o `?` propagava o erro e pulava
         // a limpeza da sessão, deixando a entrada no mapa (e o canal mpsc
@@ -297,7 +335,6 @@ impl ControlServer {
             match serde_json::from_str::<CtrlMessage>(&text) {
                 Ok(CtrlMessage::Hello {
                     token,
-                    codec,
                     sample_rate,
                     channels,
                     frame_ms,
@@ -325,11 +362,11 @@ impl ControlServer {
                     }
 
                     let id = self.new_session_id();
-                    let negotiated = if codec == CODEC_OPUS {
-                        CODEC_OPUS
-                    } else {
-                        CODEC_PCM16
-                    };
+                    // O servidor só aceita PCM s16le (receive_frames descarta
+                    // qualquer outro codec). A negociação de Opus foi removida
+                    // porque não há decoder no pipeline — aceitar "opus" aqui
+                    // criava um buraco negro (áudio mudo, sem erro).
+                    let negotiated = CODEC_PCM16;
 
                     // Reconexão: mesmo IP conectando de novo nesta execução.
                     {
@@ -348,9 +385,14 @@ impl ControlServer {
                                 codec: negotiated.to_owned(),
                                 connected_at: SystemTime::now(),
                             },
+                            addr: peer_ip,
                             tx: tx.clone(),
                         },
                     );
+
+                    // Só o IP com sessão de controle envia áudio: sem isso,
+                    // qualquer host da LAN injeta ruído no microfone do usuário.
+                    self.allowed.allow(peer_ip);
 
                     // Avisa ANTES do `welcome`: o celular só começa a
                     // transmitir depois de recebê-lo, e o listener esvazia o
@@ -364,6 +406,9 @@ impl ControlServer {
                         audio_port: self.config.audio_port,
                         target_buffer_ms: self.config.target_buffer_ms,
                         codec: negotiated.to_owned(),
+                        muted: self.remote_gain.muted(),
+                        volume: self.remote_gain.volume() as f32
+                            / crate::audio::VOLUME_UNITY as f32,
                     });
 
                     eprintln!(
@@ -375,11 +420,35 @@ impl ControlServer {
                 Ok(CtrlMessage::Mute { value }) => {
                     if session_id.is_some() {
                         self.state.write().await.muted = value;
+                        self.remote_gain.set_mute(value);
                     }
                 }
                 Ok(CtrlMessage::Volume { value }) => {
                     if session_id.is_some() {
-                        self.state.write().await.volume = value.clamp(0.0, 4.0);
+                        let clamped = value.clamp(0.0, 4.0);
+                        self.state.write().await.volume = clamped;
+                        // `f32` (0.0..=4.0) → fixed-point (0..=4000).
+                        self.remote_gain
+                            .set_volume((clamped * crate::audio::VOLUME_UNITY as f32) as u32);
+                    }
+                }
+                Ok(CtrlMessage::Ping {
+                    id,
+                    t0_ms,
+                    offset_ms,
+                }) => {
+                    if session_id.is_some() {
+                        // O offset publicado no ping é a medição do ping
+                        // anterior: o PC usa para traduzir o `capture_ts`
+                        // (relógio do celular) para o seu próprio relógio.
+                        if let Some(offset) = offset_ms {
+                            self.offset.set_ms(offset);
+                        }
+                        let _ = tx.send(CtrlMessage::Pong {
+                            id,
+                            t0_ms,
+                            t1_ms: crate::audio::latency::now_ms(),
+                        });
                     }
                 }
                 Ok(CtrlMessage::Bye) => break,
@@ -399,7 +468,12 @@ impl ControlServer {
         }
 
         if let Some(id) = session_id {
-            self.sessions.write().await.remove(&id);
+            let removed = self.sessions.write().await.remove(&id);
+            // O IP sai da allowlist quando a sessão fecha — outro host da LAN
+            // passa a ser descartado no ingest.
+            if let Some(entry) = removed {
+                self.allowed.revoke(entry.addr);
+            }
             eprintln!("[controle] sessão {id} encerrada");
             let remaining = self.sessions.read().await.len();
             self.notify_session_event(SessionEvent::Ended(remaining))

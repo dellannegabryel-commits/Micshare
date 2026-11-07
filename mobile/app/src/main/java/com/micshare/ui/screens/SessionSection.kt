@@ -265,6 +265,20 @@ private fun StatsCard(state: UiState) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatPill(
+                    value = stats?.let { "${"%.1f".format(it.latencyMs)}ms" } ?: "—",
+                    label = "Latência",
+                    modifier = Modifier.weight(1f),
+                    accent = latencyAccent(stats?.latencyMs),
+                )
+                StatPill(
+                    value = stats?.let { "${"%.1f".format(it.latencyP95Ms)}ms" } ?: "—",
+                    label = "Latência p95",
+                    modifier = Modifier.weight(1f),
+                    accent = latencyAccent(stats?.latencyP95Ms),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatPill(
                     value = stats?.seqGaps?.toString() ?: "—",
                     label = "Gaps",
                     modifier = Modifier.weight(1f),
@@ -296,4 +310,13 @@ private fun bufferAccent(bufferMs: Int?): Color? = when {
     bufferMs == null -> null
     bufferMs > 80 -> Yellow400
     else -> null
+}
+
+/** Cor de destaque da latência de rede. */
+@Composable
+private fun latencyAccent(latencyMs: Double?): Color? = when {
+    latencyMs == null -> null
+    latencyMs > 100 -> Red400
+    latencyMs > 50 -> Yellow400
+    else -> Green400
 }

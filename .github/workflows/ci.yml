@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+  JDK_VERSION: '21'
+  ANDROID_SDK: '35'
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            pc/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('pc/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - working-directory: pc/src-tauri
+        run: cargo fmt --check
+      - working-directory: pc/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - working-directory: pc/src-tauri
+        run: cargo test
+
+  node:
+    name: Node (typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
+  android:
+    name: Android (unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JDK_VERSION }}
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-${{ env.ANDROID_SDK }} build-tools;${{ env.ANDROID_SDK }}.0.0 platform-tools
+          accept-android-sdk-licenses: true
+      - working-directory: mobile
+        run: chmod +x gradlew
+      - working-directory: mobile
+        run: ./gradlew :app:test --no-daemon

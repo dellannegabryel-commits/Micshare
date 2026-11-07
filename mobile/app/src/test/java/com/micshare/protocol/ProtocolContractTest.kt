@@ -112,6 +112,29 @@ class ProtocolContractTest {
         assertEquals(30, stats.bufferMs)
         assertEquals(2, stats.seqGaps)
         assertEquals(0, stats.reconnects)
+        // Campos novos têm default: um PC antigo não quebra o app.
+        assertEquals(0.0, stats.latencyMs, 0.001)
+        assertEquals(0.0, stats.latencyP95Ms, 0.001)
+    }
+
+    @Test
+    fun ping_e_pong_no_formato_do_rust() {
+        val ping = ControlMessage.Ping(id = 7, t0Ms = 1000.5, offsetMs = -250.25)
+
+        assertEquals(
+            """{"t":"ping","id":7,"t0Ms":1000.5,"offsetMs":-250.25}""",
+            ProtocolJson.encodeToString(ControlMessage.serializer(), ping),
+        )
+
+        val pong = ProtocolJson.decodeFromString<ControlMessage>(
+            """{"t":"pong","id":7,"t0Ms":1000.5,"t1Ms":1010.0}""",
+        )
+
+        assertTrue(pong is ControlMessage.Pong)
+        pong as ControlMessage.Pong
+        assertEquals(7, pong.id)
+        assertEquals(1000.5, pong.t0Ms, 0.001)
+        assertEquals(1010.0, pong.t1Ms, 0.001)
     }
 
     @Test

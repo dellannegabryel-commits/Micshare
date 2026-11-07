@@ -1,7 +1,5 @@
 package com.micshare.network
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -19,14 +17,20 @@ class AudioSender(
 
     private val address: InetAddress = InetAddress.getByName(host)
     private val socket: DatagramSocket = DatagramSocket()
+    // Packet reutilizado para evitar alocar 976 B/frame.
+    private val packet = DatagramPacket(ByteArray(0), 0, address, port)
 
     /**
      * Envia um datagrama de áudio.
      *
+     * Não é `suspend`: o fluxo já roda em `Dispatchers.IO`, então não há
+     * motivo para trocar de contexto a cada frame.
+     *
      * @throws java.io.IOException se o envio falhar.
      */
-    suspend fun send(datagram: ByteArray) = withContext(Dispatchers.IO) {
-        socket.send(DatagramPacket(datagram, datagram.size, address, port))
+    fun send(datagram: ByteArray) {
+        packet.setData(datagram, 0, datagram.size)
+        socket.send(packet)
     }
 
     /** Fecha o socket UDP. */

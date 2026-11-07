@@ -9,7 +9,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::task::JoinHandle;
 
-use crate::audio::{AudioConfig, AudioControls, AudioPipeline, JitterMetrics, VOLUME_UNITY};
+use crate::audio::{
+    AudioConfig, AudioControls, AudioPipeline, JitterMetrics, LatencyTracker, VOLUME_UNITY,
+};
 use crate::config::ServerConfig;
 use crate::control::{ControlConfig, ControlServer, ControlStats, SessionEvent, SessionInfo};
 use crate::discovery::{BeaconConfig, Discovery};
@@ -45,6 +47,10 @@ pub struct ServerStats {
     pub volume: u32,
     /// Reconexões (novos `hello` de IPs que já se conectaram).
     pub reconnects: u32,
+    /// Latência de rede mediana (capture → chegada no PC), em ms.
+    pub latency_ms: f64,
+    /// Latência de rede p95, em ms.
+    pub latency_p95_ms: f64,
 }
 
 impl Default for ServerStats {
@@ -59,6 +65,8 @@ impl Default for ServerStats {
             muted: false,
             volume: VOLUME_UNITY,
             reconnects: 0,
+            latency_ms: 0.0,
+            latency_p95_ms: 0.0,
         }
     }
 }
@@ -72,6 +80,8 @@ pub struct Server {
     tasks: Vec<JoinHandle<()>>,
     /// Mute/volume da reprodução no PC (compartilhado com o sink).
     controls: AudioControls,
+    /// Latência de rede (capture → chegada no PC).
+    latency: Arc<LatencyTracker>,
 }
 
 impl Server {
@@ -106,6 +116,10 @@ impl Server {
         // comandos continuam funcionando e o estado permanece visível).
         let controls = AudioControls::new();
 
+        // Latência de rede: o offset é publicado pelo celular no `ping` e
+        // compartilhado com o pipeline de áudio.
+        let latency = Arc::new(LatencyTracker::new(control.clock_offset()));
+
         let control_task = {
             let control = Arc::clone(&control);
             tokio::spawn(async move {
@@ -124,6 +138,9 @@ impl Server {
                 target_buffer_ms: TARGET_BUFFER_MS,
             },
             controls.clone(),
+            control.remote_gain(),
+            control.allowed_sources(),
+            Some(Arc::clone(&latency)),
         )
         .await
         {
@@ -170,6 +187,7 @@ impl Server {
         // Publica as métricas do jitter no canal de controle (1 Hz).
         if let Some(audio) = audio.clone() {
             let control = Arc::clone(&control);
+            let latency = Arc::clone(&latency);
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(STATS_INTERVAL);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -183,6 +201,8 @@ impl Server {
                             buffer_ms: metrics.buffer_ms,
                             seq_gaps: metrics.gaps as u32,
                             reconnects: control.reconnects(),
+                            latency_ms: latency.median_ms(),
+                            latency_p95_ms: latency.p95_ms(),
                         })
                         .await;
                 }
@@ -196,6 +216,7 @@ impl Server {
             audio,
             tasks,
             controls,
+            latency,
         }))
     }
 
@@ -232,6 +253,8 @@ impl Server {
             muted: self.controls.muted(),
             volume: self.controls.volume(),
             reconnects: self.control.reconnects(),
+            latency_ms: self.latency.median_ms(),
+            latency_p95_ms: self.latency.p95_ms(),
         }
     }
 

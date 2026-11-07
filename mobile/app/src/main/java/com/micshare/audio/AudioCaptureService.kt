@@ -11,6 +11,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.micshare.R
@@ -28,6 +29,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.isActive
 
 /**
  * Serviço de foreground que captura o microfone e envia os frames ao PC.
@@ -47,7 +51,7 @@ class AudioCaptureService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var targetHost: String? = null
     private var targetPort: Int = Protocol.AUDIO_PORT
-    private var sequence: Int = 0
+    private var sequence: Long = 0
 
     /** Binder que expõe o estado e o controle de mute do serviço. */
     inner class LocalBinder : Binder() {
@@ -112,39 +116,34 @@ class AudioCaptureService : Service() {
 
             // FPS rolante: conta frames no último segundo.
             var framesThisSecond = 0
-            var secondStart = System.currentTimeMillis()
+            var secondStart = SystemClock.elapsedRealtime()
 
             try {
                 AudioCapture().frames().collect { pcm ->
                     val flags = if (_status.value.muted) AudioFrame.FLAG_MUTED else 0
                     val datagram = AudioFrame.encode(
-                        seq = sequence++,
-                        captureTsMs = System.currentTimeMillis(),
+                        seq = (sequence++ and 0xFFFFFFFFL).toInt(),
+                        captureTsMs = SystemClock.elapsedRealtime(),
                         flags = flags,
                         pcm = pcm,
                     )
                     sender.send(datagram)
                     framesThisSecond++
-                    val now = System.currentTimeMillis()
+                    // contadores acumulados localmente; publicação só a 1 Hz
+                    val now = SystemClock.elapsedRealtime()
                     val elapsed = now - secondStart
+                    // Status é publicado no máximo 1×/s (throttle).
                     if (elapsed >= 1000) {
                         val fps = (framesThisSecond * 1000 / elapsed.toInt()).coerceAtLeast(0)
                         _status.update {
                             it.copy(
-                                framesSent = it.framesSent + 1,
-                                bytesSent = it.bytesSent + datagram.size,
+                                framesSent = it.framesSent + framesThisSecond,
+                                bytesSent = it.bytesSent + (datagram.size.toLong() * framesThisSecond),
                                 framesPerSecond = fps,
                             )
                         }
                         framesThisSecond = 0
                         secondStart = now
-                    } else {
-                        _status.update {
-                            it.copy(
-                                framesSent = it.framesSent + 1,
-                                bytesSent = it.bytesSent + datagram.size,
-                            )
-                        }
                     }
                 }
             } catch (cancellation: CancellationException) {
@@ -164,7 +163,15 @@ class AudioCaptureService : Service() {
         val pm = getSystemService(PowerManager::class.java) ?: return
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Micshare::Streaming").apply {
             setReferenceCounted(false)
-            acquire(10 * 60 * 1000L) // 10 min; renovado pelo serviço
+            acquire(LOCK_TIMEOUT_MS)
+        }
+        // Renovação periódica: o lock expira em 10 min; renovamos a cada 4 min
+        // (RENWAL_INTERVAL_MS < LOCK_TIMEOUT_MS, invariante testada em WakeLockPolicy).
+        serviceScope.launch {
+            while (isActive) {
+                delay(RENEWAL_INTERVAL_MS)
+                runCatching { wakeLock?.acquire(LOCK_TIMEOUT_MS) }
+            }
         }
     }
 
@@ -178,6 +185,7 @@ class AudioCaptureService : Service() {
     private fun stopStreaming() {
         captureJob?.cancel()
         captureJob = null
+        serviceScope.coroutineContext.cancelChildren()
         releaseWakeLock()
         _status.update { it.copy(active = false) }
     }
@@ -226,6 +234,11 @@ class AudioCaptureService : Service() {
     }
 
     companion object {
+        /** Timeout do WakeLock (min). */
+        const val LOCK_TIMEOUT_MS: Long = 10 * 60 * 1000L
+        /** Intervalo de renovação do WakeLock (menor que o timeout). */
+        const val RENEWAL_INTERVAL_MS: Long = 4 * 60 * 1000L
+
         /** Canal de notificações do streaming. */
         const val CHANNEL_ID = "micshare_streaming"
 
