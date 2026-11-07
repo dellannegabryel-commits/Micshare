@@ -232,7 +232,7 @@ impl JitterBuffer {
     /// (`last_abs`): o wrap de u32 (`u32::MAX` → 0) vira `+1` em vez de um
     /// salto de 2^32 para trás. Frames atrasados (chegando fora de ordem)
     /// continuam mapeando para a posição correta e não movem o high-water.
-    fn to_absolute(&mut self, seq: u32) -> u64 {
+    fn absolute_seq(&mut self, seq: u32) -> u64 {
         let (Some(last_abs), Some(last_raw)) = (self.last_abs, self.last_raw_seq) else {
             self.last_abs = Some(u64::from(seq));
             self.last_raw_seq = Some(seq);
@@ -264,7 +264,7 @@ impl JitterBuffer {
         self.metrics.received += 1;
         self.recv_window.add(1);
 
-        let mut abs = self.to_absolute(seq);
+        let mut abs = self.absolute_seq(seq);
 
         if let Some(next) = self.next_seq {
             // Sequência absoluta: um frame atrasado tem `abs < next`.
@@ -280,7 +280,7 @@ impl JitterBuffer {
                 if (next - abs) as usize > self.max_frames {
                     self.resync();
                     // Reancora a linha do tempo no frame atual.
-                    abs = self.to_absolute(seq);
+                    abs = self.absolute_seq(seq);
                     self.next_seq = Some(abs);
                 } else {
                     return;

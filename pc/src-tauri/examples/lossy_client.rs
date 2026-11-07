@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(pcm.len(), FRAME_SAMPLES);
         let peak = pcm.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
         assert!(
-            peak > 15_000 && peak <= 16_384,
+            (15_001..=16_384).contains(&peak),
             "pico fora do esperado: {peak}"
         );
     }
