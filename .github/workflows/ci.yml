@@ -38,10 +38,11 @@ jobs:
             pc/src-tauri/target
           key: cargo-${{ runner.os }}-${{ hashFiles('pc/src-tauri/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
-      # Dependências de sistema do Tauri no Linux (glib/gtk/webkit): sem elas
-      # o build script do `glib-sys` falha e o job morre antes do clippy.
-      # Lista oficial do Tauri 2 (Debian/Ubuntu).
-      - name: Dependências de sistema (Tauri)
+      # Dependências de sistema do Tauri no Linux (glib/gtk/webkit) e do cpal
+      # (ALSA): sem elas os build scripts de `glib-sys`/`alsa-sys` falham e o
+      # job morre antes do clippy.
+      # Lista oficial do Tauri 2 (Debian/Ubuntu) + `libasound2-dev` (cpal).
+      - name: Dependências de sistema (Tauri + ALSA)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -51,6 +52,8 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            libasound2-dev \
+            libudev-dev \
             patchelf
       - working-directory: pc/src-tauri
         run: cargo fmt --check
