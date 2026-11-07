@@ -329,15 +329,19 @@ impl AudioPipeline {
             .unwrap_or_default()
     }
 
-    /// Percentual de frames perdidos (duplicados + lacunas).
+    /// Percentual de frames perdidos (lacunas de sequência sobre o total esperado).
+    ///
+    /// `lost` (frames duplicados ou que chegaram tarde demais) **não** entra
+    /// na conta: esses frames foram recebidos — já estão no denominador — e
+    /// somá-los de novo no numerador inflava a perda artificialmente.
     #[must_use]
     pub fn loss_pct(&self) -> f32 {
         let metrics = self.metrics();
-        if metrics.received == 0 {
+        let expected = metrics.received + metrics.gaps;
+        if expected == 0 {
             return 0.0;
         }
-        let lost = metrics.lost + metrics.gaps;
-        (lost as f32 / metrics.received as f32) * 100.0
+        (metrics.gaps as f32 / expected as f32) * 100.0
     }
 
     /// Esvazia o jitter buffer (troca de sessão).

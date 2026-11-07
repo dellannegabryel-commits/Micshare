@@ -6,8 +6,10 @@ import android.media.MediaRecorder
 import com.micshare.protocol.Protocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -29,6 +31,7 @@ class AudioCapture(
      * O `AudioRecord` é aberto na coleta e fechado no cancelamento.
      */
     fun frames(): Flow<ShortArray> = callbackFlow {
+
         val job = launch(Dispatchers.IO) {
             val record = createRecord()
             try {
@@ -53,7 +56,7 @@ class AudioCapture(
         }
 
         awaitClose { job.cancel() }
-    }.flowOn(Dispatchers.IO)
+    }.buffer(capacity = 256, onBufferOverflow = BufferOverflow.SUSPEND).flowOn(Dispatchers.IO)
 
     /** Preenche [buffer] com até [frameSamples] amostras; retorna quantas leu. */
     private fun readFully(record: AudioRecord, buffer: ShortArray): Int {

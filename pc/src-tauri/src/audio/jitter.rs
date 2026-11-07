@@ -32,6 +32,8 @@ pub struct JitterMetrics {
     pub fast_forwards: u64,
     /// Flushes totais do buffer.
     pub flushes: u64,
+    /// Reancoragens após quebra de sequência (o emissor reiniciou a contagem).
+    pub resyncs: u64,
 }
 
 /// Resultado de uma leitura do jitter buffer.
@@ -66,8 +68,6 @@ pub struct JitterBuffer {
     current: Vec<i16>,
     /// Posição de leitura dentro de `current`.
     current_offset: usize,
-    /// Amostras de silêncio ainda a entregar (lacuna em curso).
-    silence_remaining: usize,
     next_seq: Option<u32>,
     warm: bool,
     played_samples: u64,
@@ -86,7 +86,9 @@ impl JitterBuffer {
             .unwrap_or(10)
             .max(1);
 
-        let initial_target = usize::try_from(target_ms.div_ceil(frame_ms.max(1))).unwrap_or(3).max(1);
+        let initial_target = usize::try_from(target_ms.div_ceil(frame_ms.max(1)))
+            .unwrap_or(3)
+            .max(1);
         Self {
             frame_samples,
             frame_ms,
@@ -95,7 +97,6 @@ impl JitterBuffer {
             pending: BTreeMap::new(),
             current: Vec::new(),
             current_offset: 0,
-            silence_remaining: 0,
             next_seq: None,
             warm: false,
             played_samples: 0,
@@ -122,9 +123,26 @@ impl JitterBuffer {
         self.metrics.received += 1;
 
         if let Some(next) = self.next_seq {
-            if seq < next {
+            // Distância com wraparound de u32: negativa = frame para trás.
+            let behind = next.wrapping_sub(seq);
+            let is_behind = behind > 0 && behind <= u32::MAX / 2;
+
+            if is_behind {
                 self.metrics.lost += 1;
-                return;
+
+                // Um salto para trás maior que a janela de reordenação não é
+                // jitter: o emissor **reiniciou** a contagem (o serviço de
+                // captura do celular foi recriado pelo Android — `START_STICKY`
+                // — sem novo `hello`, logo sem `flush` no PC). Sem resync, todo
+                // frame seguinte cairia em `seq < next` e seria descartado
+                // para sempre: áudio mudo e perda ~100%.
+                if behind as usize > self.max_frames {
+                    self.resync(seq);
+                } else {
+                    return;
+                }
+                // Após resync, o frame atual ainda precisa ser inserido abaixo:
+                // não retorna.
             }
         }
 
@@ -146,7 +164,11 @@ impl JitterBuffer {
                 }
             }
         }
-        if self.last_capture_ts.map(|p| capture_ts >= p).unwrap_or(true) {
+        if self
+            .last_capture_ts
+            .map(|p| capture_ts >= p)
+            .unwrap_or(true)
+        {
             self.last_capture_ts = Some(capture_ts);
         }
         self.last_push_seq = Some(seq);
@@ -166,6 +188,23 @@ impl JitterBuffer {
 
         // buffer_ms reflete a profundidade atual.
         self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
+    }
+
+    /// Reancora o buffer em `seq` depois de uma quebra de sequência.
+    ///
+    /// Descarta o que estava pendurado e assume `seq` como próximo frame,
+    /// **sem** desaquecer: a reprodução continua imediatamente (não há razão
+    /// para pagar o warmup de novo quando o fluxo apenas recomeçou).
+    fn resync(&mut self, seq: u32) {
+        self.pending.clear();
+        self.current.clear();
+        self.current_offset = 0;
+        self.next_seq = Some(seq);
+        self.ts_deltas.clear();
+        self.last_capture_ts = None;
+        self.last_push_seq = None;
+        self.metrics.resyncs += 1;
+        self.metrics.buffer_ms = 0;
     }
 
     /// Adapta `target_frames` com base no jitter medido (2..=8 frames).
@@ -218,40 +257,52 @@ impl JitterBuffer {
                 continue;
             }
 
-            // 2) Entrega o silêncio de uma lacuna detectada.
-            if self.silence_remaining > 0 {
-                let take = (out.len() - written).min(self.silence_remaining);
-                self.silence_remaining -= take;
-                written += take;
-                continue;
-            }
-
-            // 3) Busca o próximo frame disponível.
+            // 2) Busca o próximo frame disponível.
             let Some(available) = self.pending.keys().next().copied() else {
                 underrun = true;
                 self.metrics.underruns += 1;
                 self.metrics.buffer_ms = 0;
+                // Sem dados: perde a referência de sequência. O próximo frame
+                // que chegar reancora o buffer em vez de virar uma lacuna
+                // gigante (o buraco foi do sink, não da rede).
+                self.next_seq = None;
                 break;
             };
 
-            let next = self.next_seq.unwrap_or_default();
+            // Sem referência (aquecimento, underrun ou resync): ancora no
+            // frame mais antigo disponível. Não há como saber o que faltou,
+            // então não conta lacuna.
+            let next = match self.next_seq {
+                Some(next) => next,
+                None => {
+                    self.next_seq = Some(available);
+                    available
+                }
+            };
 
             if available > next {
-                // Lacuna de (available - next) frames: preenche com silêncio
-                // por (available - next) frames inteiros, evitando cascata de
-                // underruns.
-                let gap_frames = available.saturating_sub(next);
-                self.metrics.gaps += u64::from(gap_frames);
+                // Lacuna real: os frames `next..available` não chegaram a
+                // tempo. Conta a perda, mas **não** reproduz o buraco em
+                // silêncio.
+                //
+                // Ficar `gap_frames` callbacks mudo era um loop sem saída:
+                // durante o silêncio os frames continuam chegando em tempo
+                // real, o fast-forward descarta os mais antigos e, quando o
+                // silêncio acaba, `available` já está de novo à frente de
+                // `next` — outra lacuna, outro silêncio, para sempre. Com o
+                // período de 10 ms do WASAPI (480 amostras = 1 frame), uma
+                // única perda travava o pipeline em silêncio permanente e a
+                // perda medida ia a ~90%. O certo é reancorar na borda viva
+                // e voltar a tocar imediatamente.
+                self.metrics.gaps += u64::from(available - next);
                 self.next_seq = Some(available);
-                self.silence_remaining = gap_frames as usize * self.frame_samples;
-                continue;
             }
 
             if let Some(samples) = self.pending.remove(&available) {
                 self.current = samples;
                 self.current_offset = 0;
             }
-            self.next_seq = Some(next + 1);
+            self.next_seq = Some(available + 1);
             self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
         }
 
@@ -259,8 +310,14 @@ impl JitterBuffer {
 
         if underrun {
             self.metrics.buffer_ms = 0;
-            // Underrun: reinicia o alvo na profundidade mínima.
-            self.target_frames = 2.min(self.max_frames).max(1);
+            // Underrun: o buffer secou, então falta **folga** — aumenta o
+            // alvo em 1 frame (até o teto adaptativo) para atravessar o
+            // jitter seguinte. Reduzir para o mínimo, como antes, só
+            // garantia o próximo underrun.
+            self.target_frames = (self.target_frames + 1)
+                .clamp(2, 8)
+                .min(self.max_frames)
+                .max(1);
             PopStatus::Underrun
         } else {
             self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
@@ -273,11 +330,11 @@ impl JitterBuffer {
         self.pending.clear();
         self.current.clear();
         self.current_offset = 0;
-        self.silence_remaining = 0;
         self.warm = false;
         self.next_seq = None;
         self.ts_deltas.clear();
         self.last_capture_ts = None;
+        self.last_push_seq = None;
         self.metrics.flushes += 1;
         self.metrics.buffer_ms = 0;
     }
@@ -378,8 +435,70 @@ mod tests {
         }
     }
 
+    /// Regressão: o celular reinicia a contagem de sequência sem novo `hello`.
+    ///
+    /// O Android recria o `AudioCaptureService` (`START_STICKY`) e o
+    /// `sequence` volta a 0, mas o PC não recebe `SessionEvent::Started` — logo
+    /// não há `flush`. Antes, cada frame caía em `seq < next` e era descartado
+    /// para sempre: áudio mudo e perda ~100%. O buffer tem de detectar o salto
+    /// para trás e reancorar no novo fluxo.
     #[test]
-    fn lacuna_e_preenchida_com_silencio() {
+    fn emissor_reinicia_a_sequencia_e_o_buffer_reancora() {
+        let mut buffer = buffer();
+
+        // Sessão em andamento: o PC já está no frame 5000.
+        for seq in 5_000..5_005_u32 {
+            buffer.push(seq, frame(1));
+        }
+        let mut out = vec![0_i16; FRAME];
+        for _ in 0..5 {
+            assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+        }
+
+        // O celular reinicia a contagem (serviço recriado, sem flush no PC).
+        // Cada frame leva o próprio seq como valor, para dar pra seguir a ordem.
+        for seq in 0..3_u32 {
+            buffer.push(seq, frame(seq as i16));
+        }
+
+        assert_eq!(
+            buffer.metrics().resyncs,
+            1,
+            "o salto para trás deveria ter reancorado o buffer"
+        );
+
+        // O áudio volta imediatamente, sem desaquecer, e segue em ordem.
+        for seq in 3..6_u32 {
+            buffer.push(seq, frame(seq as i16));
+        }
+        for expected in 0..6_i16 {
+            assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+            assert_eq!(out[0], expected, "esperava o frame {expected}");
+        }
+        assert_eq!(buffer.metrics().resyncs, 1, "não pode reancorar de novo");
+    }
+
+    /// Reordenação pequena (dentro da janela) continua sendo só reordenação:
+    /// não pode disparar resync.
+    #[test]
+    fn frame_atrasado_dentro_da_janela_nao_reancora() {
+        let mut buffer = buffer();
+        for seq in 0..5_u32 {
+            buffer.push(seq, frame(0));
+        }
+        let mut out = vec![0_i16; FRAME];
+        for _ in 0..5 {
+            buffer.pop_into(&mut out);
+        }
+
+        buffer.push(3, frame(0)); // atrasado, mas perto
+
+        assert_eq!(buffer.metrics().lost, 1);
+        assert_eq!(buffer.metrics().resyncs, 0);
+    }
+
+    #[test]
+    fn lacuna_conta_a_perda_e_reancora_no_frame_seguinte() {
         let mut buffer = buffer();
         buffer.push(0, frame(0));
         buffer.push(1, frame(1));
@@ -391,12 +510,66 @@ mod tests {
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
         assert_eq!(out[0], 1);
 
+        // Lacuna: conta 1 frame perdido, mas toca o frame 3 imediatamente —
+        // o buraco não é reproduzido em silêncio.
         assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
-        assert!(
-            out.iter().all(|sample| *sample == 0),
-            "lacuna não foi preenchida"
-        );
+        assert_eq!(out[0], 3, "deveria reancorar no frame disponível");
         assert_eq!(buffer.metrics().gaps, 1);
+    }
+
+    /// Regressão do bug de "90% de perda ao pausar os beacons".
+    ///
+    /// Com o período de 10 ms do WASAPI (`out.len() == frame_samples`), uma
+    /// única lacuna fazia o pop devolver `gap_frames` de silêncio e **não
+    /// consumir** o frame disponível. No callback seguinte o fast-forward já
+    /// tinha descartado esse frame, `available` estava de novo à frente de
+    /// `next`, e o pipeline entrava em silêncio permanente: 1 lacuna contada
+    /// por callback, 1 frame recebido por callback → perda ~50-90% e áudio
+    /// mudo para sempre.
+    #[test]
+    fn lacuna_nao_trava_o_pipeline_em_silencio_permanente() {
+        const PERIOD: usize = FRAME; // callback de 10 ms a 48 kHz
+
+        let mut buffer = buffer();
+        let mut out = vec![0_i16; PERIOD];
+
+        // Aquece e toca 3 frames em ordem.
+        for seq in 0..3_u32 {
+            buffer.push(seq, frame(seq as i16));
+        }
+        for expected in 0..3_i16 {
+            assert_eq!(buffer.pop_into(&mut out), PopStatus::Data);
+            assert_eq!(out[0], expected);
+        }
+
+        // O celular segue em tempo real (1 frame por callback), mas a rede
+        // perde 1 em cada 5 — cenário ruim, porém longe de ser silêncio total.
+        let mut callbacks_com_audio = 0_usize;
+        let callbacks = 200_usize;
+
+        for (callback, seq) in (0..callbacks).zip(3_u32..) {
+            if callback % 5 != 0 {
+                buffer.push(seq, frame((seq % 50) as i16));
+            }
+
+            let status = buffer.pop_into(&mut out);
+            if matches!(status, PopStatus::Data) && out.iter().any(|s| *s != 0) {
+                callbacks_com_audio += 1;
+            }
+        }
+
+        // O áudio tem de continuar fluindo: no máximo ~20% dos callbacks
+        // podem ser silêncio (a perda injetada), nunca ~100%.
+        assert!(
+            callbacks_com_audio >= callbacks * 70 / 100,
+            "pipeline travou: só {callbacks_com_audio}/{callbacks} callbacks com áudio"
+        );
+
+        // E a perda medida tem de ficar na faixa do que foi realmente
+        // perdido (20%), não explodir para 90%+.
+        let expected = buffer.metrics().received + buffer.metrics().gaps;
+        let loss = buffer.metrics().gaps as f64 / expected as f64 * 100.0;
+        assert!(loss < 45.0, "perda inflada: {loss:.1}% (esperado ~20%)");
     }
 
     #[test]
