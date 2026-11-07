@@ -29,7 +29,8 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
 
 // Cargo.toml: só a seção [package]; as dependências mantêm suas versões.
 const CARGO_PACKAGE_VERSION = /(\[\[?package\]?\][\s\S]*?^version\s*=\s*")([^"]+)(")/m;
-const CARGO_LOCK_VERSION = /(\[\[package\]\]\nname = "micshare-pc-ui"\nversion = )"([^"]+)"/;
+// `\r?\n`: no checkout do Windows (core.autocrlf) o lockfile vem com CRLF.
+const CARGO_LOCK_VERSION = /(\[\[package\]\]\r?\nname = "micshare-pc-ui"\r?\nversion = )"([^"]+)"/;
 // package-lock.json: versão do pacote raiz (top-level) e do workspace raiz.
 const LOCK_ROOT_VERSION = /^\s*"version"\s*:\s*"([^"]+)"/m;
 const LOCK_WORKSPACE_VERSION = /("packages"\s*:\s*\{\s*\n\s*""\s*:\s*\{\s*\n\s*"name"\s*:\s*"[^"]+",\s*\n\s*"version"\s*:\s*")([^"]+)(")/;
