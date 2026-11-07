@@ -100,8 +100,8 @@ private fun ServerStatusCard(
                 modifier = Modifier.weight(1f),
             )
             StatPill(
-                value = state.audio.framesSent.toString(),
-                label = "Frames",
+                value = state.audio.framesPerSecond.toString(),
+                label = "FPS",
                 modifier = Modifier.weight(1f),
                 accent = MaterialTheme.colorScheme.primary,
             )

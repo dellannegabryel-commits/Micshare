@@ -37,8 +37,13 @@ class AudioCapture(
 
                 while (isActive) {
                     val read = readFully(record, buffer)
-                    if (read == frameSamples) {
-                        trySend(buffer.copyOf())
+                    if (read > 0) {
+                        // Preenche a parte faltante com zeros para nunca perder um
+                        // frame (leitura parcial vira silêncio no final).
+                        if (read < frameSamples) {
+                            for (i in read until frameSamples) buffer[i] = 0
+                        }
+                        send(buffer.copyOf())
                     }
                 }
             } finally {
@@ -50,7 +55,7 @@ class AudioCapture(
         awaitClose { job.cancel() }
     }.flowOn(Dispatchers.IO)
 
-    /** Preenche [buffer] com exatamente [frameSamples] amostras. */
+    /** Preenche [buffer] com até [frameSamples] amostras; retorna quantas leu. */
     private fun readFully(record: AudioRecord, buffer: ShortArray): Int {
         var total = 0
         while (total < buffer.size) {

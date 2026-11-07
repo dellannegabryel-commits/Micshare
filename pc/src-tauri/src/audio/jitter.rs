@@ -9,7 +9,7 @@
 //! descartado no meio, mesmo quando o callback do dispositivo pede um número
 //! de amostras diferente do tamanho do frame.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -56,6 +56,11 @@ pub struct JitterBuffer {
     frame_ms: u32,
     target_frames: usize,
     max_frames: usize,
+    /// Janela deslizante dos últimos deltas de `capture_ts` (ms) — usada para
+    /// adaptar a profundidade alvo ao jitter observado.
+    ts_deltas: VecDeque<u32>,
+    last_capture_ts: Option<u32>,
+    last_push_seq: Option<u32>,
     pending: BTreeMap<u32, Vec<i16>>,
     /// Frame em reprodução (parcialmente consumido).
     current: Vec<i16>,
@@ -81,10 +86,11 @@ impl JitterBuffer {
             .unwrap_or(10)
             .max(1);
 
+        let initial_target = usize::try_from(target_ms.div_ceil(frame_ms.max(1))).unwrap_or(3).max(1);
         Self {
             frame_samples,
             frame_ms,
-            target_frames: usize::try_from(target_ms.div_ceil(frame_ms.max(1))).unwrap_or(3),
+            target_frames: initial_target,
             max_frames,
             pending: BTreeMap::new(),
             current: Vec::new(),
@@ -95,14 +101,24 @@ impl JitterBuffer {
             played_samples: 0,
             started_at: Instant::now(),
             metrics: JitterMetrics::default(),
+            ts_deltas: VecDeque::with_capacity(100),
+            last_capture_ts: None,
+            last_push_seq: None,
         }
     }
 
-    /// Insere um frame recebido.
+    /// Insere um frame recebido (atalho que usa `seq * frame_ms` como timestamp).
+    pub fn push(&mut self, seq: u32, samples: Vec<i16>) {
+        let capture_ts = seq.saturating_mul(self.frame_ms);
+        self.push_with_ts(seq, capture_ts, samples);
+    }
+
+    /// Insere um frame recebido com timestamp de captura explícito.
     ///
     /// Frames com sequência anterior à esperada são descartados (contados
-    /// como perdidos).
-    pub fn push(&mut self, seq: u32, samples: Vec<i16>) {
+    /// como perdidos). O alvo do jitter buffer é adaptado a partir dos
+    /// deltas de `capture_ts` (janela de 100 frames).
+    pub fn push_with_ts(&mut self, seq: u32, capture_ts: u32, samples: Vec<i16>) {
         self.metrics.received += 1;
 
         if let Some(next) = self.next_seq {
@@ -112,15 +128,57 @@ impl JitterBuffer {
             }
         }
 
+        // Mede o jitter apenas entre frames consecutivos em sequência (sem
+        // lacunas/reordenação), para não confundir perda com jitter.
+        let consecutive = self
+            .last_push_seq
+            .map(|last| seq == last.wrapping_add(1))
+            .unwrap_or(false);
+        if consecutive {
+            if let Some(prev) = self.last_capture_ts {
+                if capture_ts >= prev {
+                    let delta = capture_ts - prev;
+                    self.ts_deltas.push_back(delta);
+                    if self.ts_deltas.len() > 100 {
+                        self.ts_deltas.pop_front();
+                    }
+                    self.adapt_target();
+                }
+            }
+        }
+        if self.last_capture_ts.map(|p| capture_ts >= p).unwrap_or(true) {
+            self.last_capture_ts = Some(capture_ts);
+        }
+        self.last_push_seq = Some(seq);
+
         self.pending.insert(seq, samples);
 
-        while self.pending.len() > self.max_frames {
+        // fast_forward: descarta o frame mais antigo quando a profundidade
+        // supera o alvo + 3 (limitado por max_frames).
+        let ff_threshold = self.target_frames.saturating_add(3).min(self.max_frames);
+        while self.pending.len() > ff_threshold {
             let Some(oldest) = self.pending.keys().next().copied() else {
                 break;
             };
             self.pending.remove(&oldest);
             self.metrics.fast_forwards += 1;
         }
+
+        // buffer_ms reflete a profundidade atual.
+        self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
+    }
+
+    /// Adapta `target_frames` com base no jitter medido (2..=8 frames).
+    fn adapt_target(&mut self) {
+        if self.ts_deltas.len() < 2 {
+            return;
+        }
+        let max_delta = *self.ts_deltas.iter().max().unwrap_or(&self.frame_ms);
+        let jitter_ms = max_delta.saturating_sub(self.frame_ms);
+        // Cada frame de jitter além do frame_ms adiciona ~1 frame de folga.
+        let extra = (jitter_ms / self.frame_ms.max(1)) as usize;
+        let new_target = (3 + extra).clamp(2, 8);
+        self.target_frames = new_target.min(self.max_frames).max(1);
     }
 
     /// Preenche `out` com amostras mono contínuas.
@@ -179,10 +237,13 @@ impl JitterBuffer {
             let next = self.next_seq.unwrap_or_default();
 
             if available > next {
-                // Lacuna: preenche com silêncio até o próximo frame disponível.
-                self.metrics.gaps += u64::from(available - next);
+                // Lacuna de (available - next) frames: preenche com silêncio
+                // por (available - next) frames inteiros, evitando cascata de
+                // underruns.
+                let gap_frames = available.saturating_sub(next);
+                self.metrics.gaps += u64::from(gap_frames);
                 self.next_seq = Some(available);
-                self.silence_remaining = self.frame_samples;
+                self.silence_remaining = gap_frames as usize * self.frame_samples;
                 continue;
             }
 
@@ -197,8 +258,12 @@ impl JitterBuffer {
         self.played_samples += written as u64;
 
         if underrun {
+            self.metrics.buffer_ms = 0;
+            // Underrun: reinicia o alvo na profundidade mínima.
+            self.target_frames = 2.min(self.max_frames).max(1);
             PopStatus::Underrun
         } else {
+            self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
             PopStatus::Data
         }
     }
@@ -211,6 +276,8 @@ impl JitterBuffer {
         self.silence_remaining = 0;
         self.warm = false;
         self.next_seq = None;
+        self.ts_deltas.clear();
+        self.last_capture_ts = None;
         self.metrics.flushes += 1;
         self.metrics.buffer_ms = 0;
     }
@@ -381,9 +448,9 @@ mod tests {
             buffer.push(seq, frame(0));
         }
 
-        // O buffer guarda no máximo 10 frames (100 ms); os 10 mais antigos
-        // foram descartados.
-        assert_eq!(buffer.metrics().fast_forwards, 10);
+        // Fast-forward dispara em target+3 (6 frames com alvo 3); os 14
+        // frames mais antigos foram descartados, mantendo 6 no buffer.
+        assert_eq!(buffer.metrics().fast_forwards, 14);
         assert!(buffer.metrics().buffer_ms <= 100);
     }
 

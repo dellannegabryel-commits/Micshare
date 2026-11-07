@@ -400,18 +400,19 @@ pub async fn receive_frames(socket: UdpSocket, buffer: Arc<Mutex<JitterBuffer>>)
             continue;
         }
 
-        // Frame mutado: o PC não reproduz áudio silenciado pelo celular.
-        if header.is_muted() {
-            continue;
-        }
-
-        let samples: Vec<i16> = payload
-            .chunks_exact(2)
-            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
+        // Frame mutado: mantemos a sequência (inserindo silêncio) para evitar
+        // buracos de seq e inflação artificial da perda.
+        let samples: Vec<i16> = if header.is_muted() {
+            vec![0; payload.len() / 2]
+        } else {
+            payload
+                .chunks_exact(2)
+                .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+                .collect()
+        };
 
         if let Ok(mut guard) = buffer.lock() {
-            guard.push(header.seq, samples);
+            guard.push_with_ts(header.seq, header.capture_ts, samples);
         }
     }
 }

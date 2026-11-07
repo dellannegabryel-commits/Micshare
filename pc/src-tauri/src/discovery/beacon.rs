@@ -198,24 +198,40 @@ impl BeaconSender {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    if self.announce_once().await? {
-                        let mut status = *self.status.borrow();
-                        status.sent += 1;
-                        status.enabled = true;
-                        self.status.send_replace(status);
+                    match self.announce_once().await {
+                        Ok(true) => {
+                            let mut status = *self.status.borrow();
+                            status.sent += 1;
+                            status.enabled = true;
+                            self.status.send_replace(status);
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            eprintln!("[discovery] falha no announce: {err}");
+                        }
                     }
                 }
                 received = self.socket.recv_from(&mut probe_buf) => {
-                    let (len, from) = received?;
-                    let Ok(request) = serde_json::from_slice::<DiscoveryRequest>(&probe_buf[..len])
-                    else {
-                        continue;
-                    };
-                    if request == DiscoveryRequest::Probe {
-                        self.answer_probe(from).await?;
-                        let mut status = *self.status.borrow();
-                        status.probes_answered += 1;
-                        self.status.send_replace(status);
+                    match received {
+                        Ok((len, from)) => {
+                            let Ok(request) = serde_json::from_slice::<DiscoveryRequest>(&probe_buf[..len])
+                            else {
+                                continue;
+                            };
+                            if request == DiscoveryRequest::Probe {
+                                if let Err(err) = self.answer_probe(from).await {
+                                    eprintln!("[discovery] falha ao responder probe {from}: {err}");
+                                } else {
+                                    let mut status = *self.status.borrow();
+                                    status.probes_answered += 1;
+                                    self.status.send_replace(status);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("[discovery] erro no recv_from: {err}");
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
                     }
                 }
             }

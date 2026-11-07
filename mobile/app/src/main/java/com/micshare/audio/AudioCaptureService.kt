@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.micshare.R
@@ -43,6 +44,7 @@ class AudioCaptureService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var captureJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private var targetHost: String? = null
     private var targetPort: Int = Protocol.AUDIO_PORT
     private var sequence: Int = 0
@@ -89,6 +91,7 @@ class AudioCaptureService : Service() {
 
     override fun onDestroy() {
         stopStreaming()
+        releaseWakeLock()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -101,9 +104,15 @@ class AudioCaptureService : Service() {
         targetPort = port
         sequence = 0
 
+        acquireWakeLock()
+
         captureJob = serviceScope.launch {
             val sender = AudioSender(host, port)
-            _status.update { it.copy(active = true, error = null, framesSent = 0, bytesSent = 0) }
+            _status.update { it.copy(active = true, error = null, framesSent = 0, bytesSent = 0, framesPerSecond = 0) }
+
+            // FPS rolante: conta frames no último segundo.
+            var framesThisSecond = 0
+            var secondStart = System.currentTimeMillis()
 
             try {
                 AudioCapture().frames().collect { pcm ->
@@ -115,11 +124,27 @@ class AudioCaptureService : Service() {
                         pcm = pcm,
                     )
                     sender.send(datagram)
-                    _status.update {
-                        it.copy(
-                            framesSent = it.framesSent + 1,
-                            bytesSent = it.bytesSent + datagram.size,
-                        )
+                    framesThisSecond++
+                    val now = System.currentTimeMillis()
+                    val elapsed = now - secondStart
+                    if (elapsed >= 1000) {
+                        val fps = (framesThisSecond * 1000 / elapsed.toInt()).coerceAtLeast(0)
+                        _status.update {
+                            it.copy(
+                                framesSent = it.framesSent + 1,
+                                bytesSent = it.bytesSent + datagram.size,
+                                framesPerSecond = fps,
+                            )
+                        }
+                        framesThisSecond = 0
+                        secondStart = now
+                    } else {
+                        _status.update {
+                            it.copy(
+                                framesSent = it.framesSent + 1,
+                                bytesSent = it.bytesSent + datagram.size,
+                            )
+                        }
                     }
                 }
             } catch (cancellation: CancellationException) {
@@ -133,10 +158,27 @@ class AudioCaptureService : Service() {
         }
     }
 
+    /** Adquire o WakeLock parcial para evitar Doze durante o streaming. */
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Micshare::Streaming").apply {
+            setReferenceCounted(false)
+            acquire(10 * 60 * 1000L) // 10 min; renovado pelo serviço
+        }
+    }
+
+    /** Libera o WakeLock. */
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.release() }
+        wakeLock = null
+    }
+
     /** Encerra a captura e o envio de frames. */
     private fun stopStreaming() {
         captureJob?.cancel()
         captureJob = null
+        releaseWakeLock()
         _status.update { it.copy(active = false) }
     }
 
