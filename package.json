@@ -1,6 +1,6 @@
 {
   "name": "micshare",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Microfone P2P em rede local — celular como microfone de entrada do PC",
   "workspaces": ["pc"],

@@ -19,8 +19,8 @@ use crate::state::default_host_name;
 
 type DynError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Profundidade alvo do jitter buffer (ms).
-pub const TARGET_BUFFER_MS: u16 = 30;
+/// Profundidade alvo do jitter buffer (ms). Baixa = latência primeiro.
+pub const TARGET_BUFFER_MS: u16 = 20;
 
 /// Intervalo de publicação das métricas no canal de controle.
 const STATS_INTERVAL: Duration = Duration::from_secs(1);

@@ -329,6 +329,9 @@ impl Playout {
 
         let Ok(mut guard) = self.buffer.try_lock() else {
             data.fill(0);
+            if let Ok(mut guard) = self.buffer.try_lock() {
+                guard.note_sink_lock_failure();
+            }
             return;
         };
 
@@ -387,6 +390,9 @@ impl Playout {
 
         let Ok(mut guard) = self.buffer.try_lock() else {
             data.fill(0.0);
+            if let Ok(mut guard) = self.buffer.try_lock() {
+                guard.note_sink_lock_failure();
+            }
             return;
         };
 

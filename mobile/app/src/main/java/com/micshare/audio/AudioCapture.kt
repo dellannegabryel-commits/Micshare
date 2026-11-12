@@ -5,8 +5,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import com.micshare.protocol.Protocol
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
@@ -66,11 +66,13 @@ class AudioCapture(
                 // meio do sinal (clique garantido).
                 val assembler = FrameAssembler(frameSamples)
                 val buffer = ShortArray(frameSamples)
-                val clock = CaptureClock()
+                val frameMs = 1000L * frameSamples / sampleRate
+                val clock = CaptureClock(frameMs = frameMs)
 
                 while (isActive) {
                     val read = record.read(buffer, 0, assembler.space)
-                    if (read <= 0) continue
+                    if (read < 0) break
+                    if (read == 0) continue
                     val pcm = assembler.write(buffer, read) ?: continue
                     send(CapturedFrame(pcm, clock.captureTs()))
                 }
@@ -82,7 +84,7 @@ class AudioCapture(
         }
 
         awaitClose { job.cancel() }
-    }.buffer(capacity = 16, onBufferOverflow = BufferOverflow.SUSPEND).flowOn(Dispatchers.IO)
+    }.buffer(capacity = 2, onBufferOverflow = BufferOverflow.DROP_OLDEST).flowOn(Dispatchers.IO)
 
     /** Cria e inicializa o `AudioRecord` mono 16-bit (API 23 = minSdk). */
     private fun createRecord(source: Int): AudioRecord {

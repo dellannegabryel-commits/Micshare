@@ -587,6 +587,7 @@ pub async fn receive_frames(
                 .collect()
         };
 
+        // Decode/ganho fora do lock: minimiza contenção com o callback RT do sink.
         if let Ok(mut guard) = buffer.lock() {
             guard.push_with_ts(header.seq, header.capture_ts, samples);
         }

@@ -38,6 +38,8 @@ pub struct JitterMetrics {
     pub received_fps: f32,
     /// Datagramas descartados por virem de um IP sem sessão de controle.
     pub rejected: u64,
+    /// Callbacks de saída que não conseguiram lock do jitter buffer (silêncio).
+    pub sink_lock_failures: u64,
 }
 
 /// Janela móvel de taxa (últimos 1 s).
@@ -176,6 +178,8 @@ pub struct JitterBuffer {
     play_window: RateWindow,
     /// Janela de 1 s com os frames recebidos (base do FPS de recepção).
     recv_window: RateWindow,
+    /// Pops consecutivos estáveis (sem underrun/PLC/lacuna pendente) — base do decaimento.
+    stable_pops: u32,
     metrics: JitterMetrics,
 }
 
@@ -217,6 +221,7 @@ impl JitterBuffer {
             last_push_seq: None,
             last_abs: None,
             last_raw_seq: None,
+            stable_pops: 0,
         }
     }
 
@@ -346,6 +351,7 @@ impl JitterBuffer {
         self.ts_deltas.clear();
         self.last_capture_ts = None;
         self.last_push_seq = None;
+        self.stable_pops = 0;
         self.metrics.resyncs += 1;
         self.metrics.buffer_ms = 0;
     }
@@ -531,6 +537,7 @@ impl JitterBuffer {
 
         if underrun {
             self.metrics.buffer_ms = 0;
+            self.stable_pops = 0;
             // Underrun: o buffer secou, então falta **folga** — aumenta o
             // alvo em 1 frame (até o teto adaptativo) para atravessar o
             // jitter seguinte. Reduzir para o mínimo, como antes, só
@@ -542,6 +549,24 @@ impl JitterBuffer {
             PopStatus::Underrun
         } else {
             self.metrics.buffer_ms = (self.pending.len() as u32) * self.frame_ms;
+
+            // Backlog/latência: decai alvo só quando estável e sem lacuna
+            // pendente (não interfere em PLC/gap/ordem; só reduz folga futura).
+            let stable = self.plc_left == 0
+                && self.plc_next.is_none()
+                && self.fade_out_left == 0
+                && self.pending.len() <= self.target_frames;
+            if stable {
+                self.stable_pops = self.stable_pops.saturating_add(1);
+                // ~2 s estável a 100 pops/s (10 ms): baixa alvo 1 degrau.
+                if self.stable_pops >= 200 && self.target_frames > 2 {
+                    self.target_frames -= 1;
+                    self.stable_pops = 0;
+                }
+            } else {
+                self.stable_pops = 0;
+            }
+
             PopStatus::Data
         }
     }
@@ -568,6 +593,7 @@ impl JitterBuffer {
         self.ts_deltas.clear();
         self.last_capture_ts = None;
         self.last_push_seq = None;
+        self.stable_pops = 0;
         self.play_window.reset();
         self.recv_window.reset();
         self.metrics.flushes += 1;
@@ -585,6 +611,11 @@ impl JitterBuffer {
     /// Conta um datagrama descartado na origem (IP sem sessão de controle).
     pub fn note_rejected(&mut self) {
         self.metrics.rejected += 1;
+    }
+
+    /// Conta um callback de saída que não obteve o lock (silêncio emitido).
+    pub fn note_sink_lock_failure(&mut self) {
+        self.metrics.sink_lock_failures += 1;
     }
 
     /// Frames reproduzidos por segundo (janela de 1 s).
